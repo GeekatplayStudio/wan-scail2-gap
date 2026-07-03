@@ -336,6 +336,43 @@ def _compose_prompt(scheduled_prompt, char_prompts, identities):
     return scheduled_prompt
 
 
+# D65 white point + sRGB<->XYZ matrices for the pure-torch LAB conversion.
+# (kornia's native lab_to_rgb hard-crashes with an access violation on some
+# torch/python combos, so we do the math ourselves - it's just two matmuls.)
+_LAB_WP = (0.95047, 1.0, 1.08883)
+_RGB2XYZ = ((0.412453, 0.357580, 0.180423),
+            (0.212671, 0.715160, 0.072169),
+            (0.019334, 0.119193, 0.950227))
+_XYZ2RGB = ((3.240479, -1.537150, -0.498535),
+            (-0.969256, 1.875992, 0.041556),
+            (0.055648, -0.204043, 1.057311))
+
+
+def _rgb_to_lab(rgb):
+    """(B,3,H,W) sRGB in [0,1] -> CIELAB. Pure torch."""
+    lin = torch.where(rgb > 0.04045, ((rgb + 0.055) / 1.055).clamp(min=0.0) ** 2.4, rgb / 12.92)
+    m = torch.tensor(_RGB2XYZ, dtype=lin.dtype, device=lin.device)
+    xyz = torch.einsum("ij,bjhw->bihw", m, lin)
+    xyz = xyz / torch.tensor(_LAB_WP, dtype=lin.dtype, device=lin.device).view(1, 3, 1, 1)
+    f = torch.where(xyz > 0.008856, xyz.clamp(min=1e-8) ** (1.0 / 3.0), 7.787 * xyz + 16.0 / 116.0)
+    fx, fy, fz = f[:, 0:1], f[:, 1:2], f[:, 2:3]
+    return torch.cat([116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)], dim=1)
+
+
+def _lab_to_rgb(lab):
+    """CIELAB -> (B,3,H,W) sRGB in [0,1]. Pure torch."""
+    L, a, b = lab[:, 0:1], lab[:, 1:2], lab[:, 2:3]
+    fy = (L + 16.0) / 116.0
+    fx = fy + a / 500.0
+    fz = fy - b / 200.0
+    f = torch.cat([fx, fy, fz], dim=1)
+    xyz = torch.where(f ** 3 > 0.008856, f ** 3, (f - 16.0 / 116.0) / 7.787)
+    xyz = xyz * torch.tensor(_LAB_WP, dtype=lab.dtype, device=lab.device).view(1, 3, 1, 1)
+    m = torch.tensor(_XYZ2RGB, dtype=lab.dtype, device=lab.device)
+    lin = torch.einsum("ij,bjhw->bihw", m, xyz)
+    return torch.where(lin > 0.0031308, 1.055 * lin.clamp(min=0.0) ** (1.0 / 2.4) - 0.055, 12.92 * lin)
+
+
 def _match_colors(target, src_anchor, dst_anchor, mode):
     """Reinhard-style mean/std transfer: map src_anchor stats onto dst_anchor
     stats and apply that transform to the whole target chunk. Anchors are the
@@ -343,17 +380,10 @@ def _match_colors(target, src_anchor, dst_anchor, mode):
     if mode == "disabled":
         return target
     use_lab = mode == "lab"
-    kornia = None
-    if use_lab:
-        try:
-            import kornia  # noqa: F401 — core ComfyUI ships it (ColorTransfer node)
-            import kornia.color
-        except ImportError:
-            use_lab = False
 
     def to_space(x):
         x = x[..., :3].movedim(-1, 1).float()
-        return kornia.color.rgb_to_lab(x) if use_lab else x
+        return _rgb_to_lab(x) if use_lab else x
 
     t = to_space(target)
     s = to_space(src_anchor)
@@ -364,7 +394,7 @@ def _match_colors(target, src_anchor, dst_anchor, mode):
     d_std = d.std(dim=(0, 2, 3), keepdim=True)
     out = (t - s_mean) / s_std * d_std + d_mean
     if use_lab:
-        out = kornia.color.lab_to_rgb(out)
+        out = _lab_to_rgb(out)
     return out.clamp(0.0, 1.0).movedim(1, -1)
 
 
