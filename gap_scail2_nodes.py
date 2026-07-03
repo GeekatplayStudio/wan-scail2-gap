@@ -790,34 +790,86 @@ class GAPSCAIL2LongVideo:
         return (result, report)
 
 
+def _letterbox(img_bchw, width, height, bg_value, method="bicubic"):
+    """Scale to FIT inside width x height (nothing cropped away) and pad with
+    bg_value. Cropping a portrait reference to a landscape frame used to cut
+    the character's head/feet out of the reference latent entirely."""
+    b, c, h, w = img_bchw.shape
+    scale = min(width / w, height / h)
+    nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
+    resized = comfy.utils.common_upscale(img_bchw, nw, nh, method, "disabled")
+    canvas = torch.full((b, c, height, width), bg_value, dtype=resized.dtype, device=resized.device)
+    y0, x0 = (height - nh) // 2, (width - nw) // 2
+    canvas[:, :, y0:y0 + nh, x0:x0 + nw] = resized
+    return canvas
+
+
 def _prep_ref(image, mask, width, height, color_idx, bg_value, device):
-    """Resize one reference image + mask to generation size; render the mask in
-    the identity's palette color on the mode-appropriate background."""
-    img = comfy.utils.common_upscale(
-        image[:1, :, :, :3].movedim(-1, 1), width, height, "bicubic", "center").movedim(1, -1).to(device)
+    """Letterbox one reference image + mask to generation size; render the mask
+    in the identity's palette color on the mode-appropriate background.
+    Returns (image [1,H,W,3], colored_mask [1,H,W,3], mask [1,H,W])."""
+    img = _letterbox(image[:1, :, :, :3].movedim(-1, 1).float().to(device), width, height, bg_value).movedim(1, -1)
     if mask is None:
-        m = torch.ones((1, height, width), device=device)
+        m_in = torch.ones((1, 1) + tuple(image.shape[1:3]), device=device)
     else:
         if mask.ndim == 2:
             mask = mask.unsqueeze(0)
-        # same scale + center-crop geometry as the image, so mask stays aligned
-        m = comfy.utils.common_upscale(
-            mask[:1].unsqueeze(1).float().to(device), width, height, "nearest-exact", "center").squeeze(1)
+        m_in = mask[:1].unsqueeze(1).float().to(device)
+    m = _letterbox(m_in, width, height, 0.0, "nearest-exact").squeeze(1)
     color = torch.tensor(PALETTE[color_idx], device=device).view(1, 1, 1, 3)
     bg = torch.full((1, height, width, 3), bg_value, device=device)
     colored = torch.where((m > 0.5).unsqueeze(-1), color.expand(1, height, width, 3), bg)
-    return img, colored
+    return img, colored, m
+
+
+def _composite_primary(chars, width, height, bg_value, device):
+    """Build the SCAIL-2 primary reference: all character cutouts side by side
+    on one canvas, each region colored with its identity color in the mask.
+    The model treats reference_latents[0] as the canonical multi-identity
+    image; per-character images become additional views."""
+    n = len(chars)
+    col_w = width // n
+    canvas = torch.full((1, height, width, 3), bg_value, device=device)
+    canvas_mask = torch.full((1, height, width, 3), bg_value, device=device)
+    for i, (img, m) in enumerate(chars):
+        ys, xs = torch.where(m[0] > 0.5)
+        if len(ys) == 0:
+            continue
+        y0, y1 = ys.min().item(), ys.max().item() + 1
+        x0, x1 = xs.min().item(), xs.max().item() + 1
+        crop_img = img[:, y0:y1, x0:x1, :].movedim(-1, 1)
+        crop_m = m[:, y0:y1, x0:x1].unsqueeze(1)
+        ch, cw = y1 - y0, x1 - x0
+        scale = min(col_w * 0.94 / cw, height * 0.94 / ch)
+        nw, nh = max(1, int(cw * scale)), max(1, int(ch * scale))
+        crop_img = comfy.utils.common_upscale(crop_img, nw, nh, "bicubic", "disabled").movedim(1, -1)
+        crop_m = comfy.utils.common_upscale(crop_m, nw, nh, "nearest-exact", "disabled").squeeze(1)
+        ox = i * col_w + (col_w - nw) // 2
+        oy = (height - nh) // 2
+        mm = (crop_m > 0.5).unsqueeze(-1)
+        region = canvas[:, oy:oy + nh, ox:ox + nw, :]
+        canvas[:, oy:oy + nh, ox:ox + nw, :] = torch.where(mm, crop_img, region)
+        color = torch.tensor(PALETTE[i], device=device).view(1, 1, 1, 3)
+        mregion = canvas_mask[:, oy:oy + nh, ox:ox + nw, :]
+        canvas_mask[:, oy:oy + nh, ox:ox + nw, :] = torch.where(mm, color.expand_as(mregion), mregion)
+    return canvas, canvas_mask
 
 
 class GAPMultiCharacterReference:
     """Build the SCAIL-2 multi-identity reference batch from separate character
-    images. Character N gets palette color N; in the driving video, identity
-    colors are assigned by SCAIL2ColoredMask sort order (default left_to_right:
-    character 1 replaces the person appearing first/leftmost)."""
+    images. With 2+ characters, a composite PRIMARY reference (all character
+    cutouts side by side, identity-colored mask) is built automatically — the
+    model treats reference_latents[0] as the canonical multi-identity image —
+    and the individual images are appended as additional views. Character N
+    gets palette color N; in the driving video, identity colors are assigned by
+    SCAIL2ColoredMask sort order (default left_to_right: character 1 replaces
+    the person appearing first/leftmost). Wire clip_vision_image (the primary)
+    into CLIPVisionEncode — encoding the whole batch would ignore all but the
+    first image."""
 
     CATEGORY = "GAP/SCAIL2"
-    RETURN_TYPES = ("IMAGE", "IMAGE", "INT")
-    RETURN_NAMES = ("reference_image", "reference_image_mask", "character_count")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "INT")
+    RETURN_NAMES = ("reference_image", "reference_image_mask", "clip_vision_image", "character_count")
     FUNCTION = "build"
 
     @classmethod
@@ -838,16 +890,24 @@ class GAPMultiCharacterReference:
         device = comfy.model_management.intermediate_device()
         bg_value = 0.0 if replacement_mode else 1.0  # nodes_scail: ref bg black in replacement mode
 
-        images, colored_masks = [], []
+        images, colored_masks, masks = [], [], []
         for i in range(1, MAX_CHARACTERS + 1):
             img = image_1 if i == 1 else kwargs.get(f"image_{i}")
             if img is None:
                 continue
-            ref, colored = _prep_ref(img, kwargs.get(f"mask_{i}"), width, height, len(images), bg_value, device)
+            ref, colored, m = _prep_ref(img, kwargs.get(f"mask_{i}"), width, height, len(images), bg_value, device)
             images.append(ref)
             colored_masks.append(colored)
+            masks.append(m)
 
-        return (torch.cat(images, dim=0), torch.cat(colored_masks, dim=0), len(images))
+        if len(images) == 1:
+            return (images[0], colored_masks[0], images[0], 1)
+
+        primary, primary_mask = _composite_primary(
+            list(zip(images, masks)), width, height, bg_value, device)
+        reference = torch.cat([primary] + images, dim=0)
+        reference_mask = torch.cat([primary_mask] + colored_masks, dim=0)
+        return (reference, reference_mask, primary, len(images))
 
 
 class GAPCharacterExtraView:
@@ -880,7 +940,7 @@ class GAPCharacterExtraView:
         device = comfy.model_management.intermediate_device()
         height, width = reference_image.shape[1], reference_image.shape[2]
         bg_value = 0.0 if replacement_mode else 1.0
-        img, colored = _prep_ref(image, mask, width, height, character - 1, bg_value, device)
+        img, colored, _ = _prep_ref(image, mask, width, height, character - 1, bg_value, device)
         return (
             torch.cat([reference_image.to(device), img], dim=0),
             torch.cat([reference_image_mask.to(device), colored], dim=0),

@@ -79,7 +79,7 @@ exactly what to set.
 | Node | Purpose |
 |---|---|
 | **GAP SCAIL-2 Long Video** | The orchestrator: chunking, anchoring, per-chunk dynamic prompts, scene cuts, color match, checkpoints, stitching. Live progress on the node. |
-| **GAP Multi-Character Reference** | Builds the multi-identity reference batch from up to 6 character images + masks. |
+| **GAP Multi-Character Reference** | Builds the multi-identity reference batch from up to 6 character images + masks. With 2+ characters it auto-builds the composite **primary reference** (all characters side by side — SCAIL-2's canonical identity image) and exposes it on `clip_vision_image` for CLIP-vision encoding. Images are letterboxed, never cropped. |
 | **GAP Character Extra View** | Appends an extra reference view (back view / close-up) for one character — chain freely. |
 | **GAP Character Timeline** | Footage analysis: who appears when + auto-generated schedule template. |
 | **GAP SCAIL-2 Chunk Planner** | Dry-run: chunk boundaries and exact per-chunk prompts without loading the diffusion model. |
@@ -110,6 +110,24 @@ If the output "takes the colors but keeps a human body":
    LoRA and set **steps 40, cfg 5**.
 4. **Loosen the pose**: `pose_strength ≈ 0.7`, `pose_end ≈ 0.8` (lower for very different
    body proportions).
+
+## Characters don't resemble the references?
+
+Fixed in v1.1 — three causes were addressed; if resemblance is still weak:
+
+1. **Quality mode**: bypass the distill LoRA, steps 40 / cfg 5 — turbo (cfg 1) trades identity
+   fidelity for speed.
+2. **Clean references**: well-lit, front-facing, character fills the frame. Add a
+   *GAP Character Extra View* (back view / close-up) per character.
+3. **REF MASK preview**: first frame must show the composite with every character in its
+   color; a partial silhouette means only part of the character reaches the model.
+4. **Resolution**: more pixels per face helps (e.g. 1088×608 if VRAM allows).
+
+Background (v1.1 fixes): reference images are now letterboxed instead of center-cropped
+(portrait refs used to lose head/feet), a composite primary reference is built automatically
+for 2+ characters (the model treats `reference_latents[0]` as the canonical multi-identity
+image), and CLIP vision now encodes that single primary instead of a batch (batched encodings
+were truncated to the first image by the sampler).
 
 ## Prompting strategy
 

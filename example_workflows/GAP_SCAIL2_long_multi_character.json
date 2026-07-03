@@ -696,8 +696,7 @@
           "name": "reference_image",
           "type": "IMAGE",
           "links": [
-            22,
-            23
+            22
           ]
         },
         {
@@ -706,6 +705,13 @@
           "links": [
             24,
             52
+          ]
+        },
+        {
+          "name": "clip_vision_image",
+          "type": "IMAGE",
+          "links": [
+            23
           ]
         },
         {
@@ -721,7 +727,8 @@
         896,
         512,
         true
-      ]
+      ],
+      "title": "Build references (auto composite primary)"
     },
     {
       "id": 16,
@@ -1710,7 +1717,7 @@
       "title": "③ Characters",
       "properties": {},
       "widgets_values": [
-        "### Character images\nOne clear image per character. *SAM3 Detect* masks the subject using the **SUBJECT text under each image** — set it to what the image actually contains:\n- human → `person`\n- plush toy → `toy bear` / `plush teddy bear`\n- robot, animal, creature → name it\n\n**Check the REF MASK preview** (below the builder): every character must appear as a colored silhouette (1=blue, 2=red). Black/partial = SAM3 didn't find it → fix the SUBJECT text.\n\n- Character 1 replaces the first/leftmost person in the video.\n- More characters (max 6): duplicate LoadImage + SUBJECT + Detect, wire to `image_3`/`mask_3`.\n- Stronger identity: add *GAP Character Extra View* between builder and generator."
+        "### Character images\nOne clear image per character (portrait OK - images are fit, never cropped). *SAM3 Detect* masks the subject using the **SUBJECT text under each image** - set it to what the image contains: person, toy bear, robot...\n\nWith 2+ characters the builder automatically creates a **composite primary reference** (all characters side by side) - that is what SCAIL-2 uses as the canonical identity image - and keeps each photo as an additional view.\n\n**Check the REF MASK preview** below the builder: first frame = composite with every character in its color, then one color per character. Black/partial = SAM3 missed it -> fix the SUBJECT text.\n\n- Character 1 replaces the first/leftmost person in the video.\n- More characters (max 6): duplicate LoadImage + SUBJECT + Detect, wire to image_3/mask_3.\n- Stronger identity: add *GAP Character Extra View* between builder and generator."
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -1734,7 +1741,7 @@
       "title": "⑥ Generator options — cheat sheet",
       "properties": {},
       "widgets_values": [
-        "### Prompts\n- **base_prompt** — the scene/style; put `{characters}` where character descriptions go.\n- **character_prompts** — one line per character: `1: a man in a red jacket…`. Injected automatically **only in chunks where that character is on screen**.\n- **prompt_schedule** — per-frame-range actions: `0-151: they dance`. Get a pre-filled template from ⑧ FOOTAGE ANALYSIS. Empty ranges fall back to base_prompt. `#` lines are comments.\n\n### Chunking / memory\n- **chunk_length** 81 (trained). Lower → less VRAM. **overlap** 5 = frames carried between chunks.\n- **vae_decode** `tiled` → much lower VRAM during decode.\n\n### Scene cuts\n- **detect_scene_cuts** on: chunk boundaries snap to hard cuts, anchor resets at each cut (no ghosting). **scene_cut_threshold** lower = more sensitive.\n\n### New render vs resume\n- **cache_mode** `new render` (default) = every queue renders fresh; finished chunks are still checkpointed to disk as you go.\n- Crash / interrupt? Switch to `resume` and queue → continues from the last finished chunk.\n- **chunk_rerender** (needs `resume`): `3` or `2,5` or `4-6` + a new seed → regenerate only those chunks. **rerender_cascade** also redoes everything after (perfect continuity).\n- One **cache_id** per project; if the video/settings changed, resume detects it and safely starts fresh.\n\n### Speed / quality\n- Turbo (default): distill LoRA on, **steps 6, cfg 1**.\n- Max quality: bypass the *Distill LoRA* node (CTRL+B) in ⑤ MODELS, set **steps 40, cfg 5**.\n- **seed**: per-chunk seed = seed + chunk number.\n\n### Sync & color\n- **pad_to_source_length** on: output matches source frame count (audio stays in sync).\n- **color_match** `lab`: cancels color drift between chunks.\n\n### Live progress\nThe node shows `chunk i/N | frames | characters` while working; the console logs the full plan and every prompt. The **report** output (⑦) is the final per-chunk summary.\n\n### Non-human characters (toy bear, robot, creature…)\nIf the output only picks up colors but keeps a human body:\n1. Set the character's **SUBJECT text** (group ③) to what it is — e.g. `pink plush teddy bear` — and confirm the REF MASK preview shows its full silhouette.\n2. Describe it explicitly in **character_prompts**: `1: a fluffy pink plush teddy bear with round ears and stubby arms`.\n3. **Turn off turbo** — cfg 1 barely follows prompts. Bypass the *Distill LoRA* (⑤, CTRL+B) and set **steps 40, cfg 5**.\n4. Loosen the pose so the human body shape isn't forced: **pose_strength ≈ 0.7**, **pose_end ≈ 0.8** (lower further for very different proportions)."
+        "### Prompts\n- **base_prompt** — the scene/style; put `{characters}` where character descriptions go.\n- **character_prompts** — one line per character: `1: a man in a red jacket…`. Injected automatically **only in chunks where that character is on screen**.\n- **prompt_schedule** — per-frame-range actions: `0-151: they dance`. Get a pre-filled template from ⑧ FOOTAGE ANALYSIS. Empty ranges fall back to base_prompt. `#` lines are comments.\n\n### Chunking / memory\n- **chunk_length** 81 (trained). Lower → less VRAM. **overlap** 5 = frames carried between chunks.\n- **vae_decode** `tiled` → much lower VRAM during decode.\n\n### Scene cuts\n- **detect_scene_cuts** on: chunk boundaries snap to hard cuts, anchor resets at each cut (no ghosting). **scene_cut_threshold** lower = more sensitive.\n\n### New render vs resume\n- **cache_mode** `new render` (default) = every queue renders fresh; finished chunks are still checkpointed to disk as you go.\n- Crash / interrupt? Switch to `resume` and queue → continues from the last finished chunk.\n- **chunk_rerender** (needs `resume`): `3` or `2,5` or `4-6` + a new seed → regenerate only those chunks. **rerender_cascade** also redoes everything after (perfect continuity).\n- One **cache_id** per project; if the video/settings changed, resume detects it and safely starts fresh.\n\n### Speed / quality\n- Turbo (default): distill LoRA on, **steps 6, cfg 1**.\n- Max quality: bypass the *Distill LoRA* node (CTRL+B) in ⑤ MODELS, set **steps 40, cfg 5**.\n- **seed**: per-chunk seed = seed + chunk number.\n\n### Sync & color\n- **pad_to_source_length** on: output matches source frame count (audio stays in sync).\n- **color_match** `lab`: cancels color drift between chunks.\n\n### Live progress\nThe node shows `chunk i/N | frames | characters` while working; the console logs the full plan and every prompt. The **report** output (⑦) is the final per-chunk summary.\n\n### Non-human characters (toy bear, robot, creature…)\nIf the output only picks up colors but keeps a human body:\n1. Set the character's **SUBJECT text** (group ③) to what it is — e.g. `pink plush teddy bear` — and confirm the REF MASK preview shows its full silhouette.\n2. Describe it explicitly in **character_prompts**: `1: a fluffy pink plush teddy bear with round ears and stubby arms`.\n3. **Turn off turbo** — cfg 1 barely follows prompts. Bypass the *Distill LoRA* (⑤, CTRL+B) and set **steps 40, cfg 5**.\n4. Loosen the pose so the human body shape isn't forced: **pose_strength ≈ 0.7**, **pose_end ≈ 0.8** (lower further for very different proportions).\n\n### Characters do not resemble the references?\n1. Best-quality mode: bypass the Distill LoRA (5, CTRL+B), **steps 40, cfg 5** - turbo (cfg 1) costs identity fidelity.\n2. Use clean, well-lit, front-facing reference photos; add a *GAP Character Extra View* (back view / close-up) per character.\n3. Check the REF MASK preview - a partial mask means only part of the character reaches the model.\n4. Higher resolution (e.g. 1088x608) gives the model more pixels per face."
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -1830,7 +1837,7 @@
         }
       ],
       "outputs": [],
-      "title": "REF MASK CHECK: each character must show in its color",
+      "title": "REF MASK CHECK: composite primary + one color per character",
       "properties": {
         "cnr_id": "comfy-core",
         "Node name for S&R": "PreviewImage"
@@ -2125,7 +2132,7 @@
     [
       23,
       15,
-      0,
+      2,
       22,
       1,
       "IMAGE"
