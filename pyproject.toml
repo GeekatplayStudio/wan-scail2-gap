@@ -1,0 +1,14 @@
+[project]
+name = "comfyui-gap-character-replacement"
+description = "GAP SCAIL-2 Character Replacement: any-length multi-character video replacement for ComfyUI (chunking, dynamic prompts, footage analysis, crash-safe checkpoints) by Geekatplay Studio."
+version = "1.0.0"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/GeekatplayStudio/wan-scail2-gap"
+YouTube = "https://www.youtube.com/@geekatplay"
+
+[tool.comfy]
+PublisherId = "geekatplay"
+DisplayName = "GAP SCAIL-2 Character Replacement"
+Icon = ""

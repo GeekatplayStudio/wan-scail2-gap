@@ -1,0 +1,2447 @@
+{
+  "id": "a7c1f2d3-4b5e-4f6a-8b9c-0d1e2f3a4b5c",
+  "revision": 0,
+  "last_node_id": 45,
+  "last_link_id": 54,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadVideo",
+      "pos": [
+        -2180,
+        140
+      ],
+      "size": [
+        460,
+        440
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "title": "Load Driving Video (any length)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "LoadVideo"
+      },
+      "widgets_values": [
+        "",
+        "image"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "GetVideoComponents",
+      "pos": [
+        -2180,
+        660
+      ],
+      "size": [
+        260,
+        160
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            2
+          ]
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            3
+          ]
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "links": [
+            4,
+            39,
+            49
+          ]
+        },
+        {
+          "name": "bit_depth",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "GetVideoComponents"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 5,
+      "type": "ResizeImageMaskNode",
+      "pos": [
+        -1860,
+        660
+      ],
+      "size": [
+        280,
+        170
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "input",
+          "type": "IMAGE,MASK",
+          "link": 2
+        },
+        {
+          "name": "resize_type.width",
+          "label": "width",
+          "type": "INT",
+          "widget": {
+            "name": "resize_type.width"
+          },
+          "link": 42
+        },
+        {
+          "name": "resize_type.height",
+          "label": "height",
+          "type": "INT",
+          "widget": {
+            "name": "resize_type.height"
+          },
+          "link": 45
+        }
+      ],
+      "outputs": [
+        {
+          "name": "resized",
+          "type": "IMAGE",
+          "links": [
+            5,
+            51,
+            40
+          ]
+        }
+      ],
+      "title": "Resize driving video",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "ResizeImageMaskNode"
+      },
+      "widgets_values": [
+        "scale dimensions",
+        896,
+        512,
+        "center",
+        "area"
+      ]
+    },
+    {
+      "id": 6,
+      "type": "CheckpointLoaderSimple",
+      "pos": [
+        -1480,
+        140
+      ],
+      "size": [
+        390,
+        140
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            7,
+            8,
+            9
+          ]
+        },
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            10,
+            53,
+            54
+          ]
+        },
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": null
+        }
+      ],
+      "title": "SAM3 Model",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "CheckpointLoaderSimple"
+      },
+      "widgets_values": [
+        "sam3.1_multiplex_fp16.safetensors"
+      ]
+    },
+    {
+      "id": 7,
+      "type": "CLIPTextEncode",
+      "pos": [
+        -1480,
+        350
+      ],
+      "size": [
+        390,
+        130
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 10
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            11
+          ]
+        }
+      ],
+      "title": "SAM3: what to track in the VIDEO",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "human"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "SAM3_VideoTrack",
+      "pos": [
+        -1010,
+        140
+      ],
+      "size": [
+        300,
+        230
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 5
+        },
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 7
+        },
+        {
+          "name": "initial_mask",
+          "shape": 7,
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "name": "conditioning",
+          "shape": 7,
+          "type": "CONDITIONING",
+          "link": 11
+        }
+      ],
+      "outputs": [
+        {
+          "name": "track_data",
+          "type": "SAM3_TRACK_DATA",
+          "links": [
+            14
+          ]
+        }
+      ],
+      "title": "Track people in WHOLE video (one pass)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "SAM3_VideoTrack"
+      },
+      "widgets_values": [
+        0.5,
+        6,
+        1
+      ]
+    },
+    {
+      "id": 9,
+      "type": "SCAIL2ColoredMask",
+      "pos": [
+        -1010,
+        450
+      ],
+      "size": [
+        340,
+        200
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "driving_track_data",
+          "type": "SAM3_TRACK_DATA",
+          "link": 14
+        },
+        {
+          "name": "ref_track_data",
+          "shape": 7,
+          "type": "SAM3_TRACK_DATA,MASK",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "pose_video_mask",
+          "type": "IMAGE",
+          "links": [
+            15,
+            36,
+            41
+          ]
+        },
+        {
+          "name": "reference_image_mask",
+          "type": "IMAGE",
+          "links": null
+        }
+      ],
+      "title": "Colored driving mask (identity colors)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "SCAIL2ColoredMask"
+      },
+      "widgets_values": [
+        "",
+        "left_to_right",
+        true
+      ]
+    },
+    {
+      "id": 10,
+      "type": "LoadImage",
+      "pos": [
+        -2180,
+        1080
+      ],
+      "size": [
+        350,
+        390
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            16,
+            17
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "title": "Character 1 (blue = first/leftmost person)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "",
+        "image"
+      ]
+    },
+    {
+      "id": 11,
+      "type": "LoadImage",
+      "pos": [
+        -1400,
+        1080
+      ],
+      "size": [
+        350,
+        390
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            18,
+            19
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "title": "Character 2 (red = second person)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "",
+        "image"
+      ]
+    },
+    {
+      "id": 13,
+      "type": "SAM3_Detect",
+      "pos": [
+        -1760,
+        1080
+      ],
+      "size": [
+        300,
+        230
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 8
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 16
+        },
+        {
+          "name": "conditioning",
+          "shape": 7,
+          "type": "CONDITIONING",
+          "link": 12
+        },
+        {
+          "name": "bboxes",
+          "shape": 7,
+          "type": "BOUNDING_BOX",
+          "link": null
+        },
+        {
+          "name": "positive_coords",
+          "shape": 7,
+          "type": "STRING",
+          "link": null
+        },
+        {
+          "name": "negative_coords",
+          "shape": 7,
+          "type": "STRING",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "masks",
+          "type": "MASK",
+          "links": [
+            20
+          ]
+        },
+        {
+          "name": "bboxes",
+          "type": "BOUNDING_BOX",
+          "links": null
+        }
+      ],
+      "title": "Mask character 1",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "SAM3_Detect"
+      },
+      "widgets_values": [
+        0.5,
+        2,
+        false
+      ]
+    },
+    {
+      "id": 14,
+      "type": "SAM3_Detect",
+      "pos": [
+        -980,
+        1080
+      ],
+      "size": [
+        300,
+        230
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 9
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 18
+        },
+        {
+          "name": "conditioning",
+          "shape": 7,
+          "type": "CONDITIONING",
+          "link": 13
+        },
+        {
+          "name": "bboxes",
+          "shape": 7,
+          "type": "BOUNDING_BOX",
+          "link": null
+        },
+        {
+          "name": "positive_coords",
+          "shape": 7,
+          "type": "STRING",
+          "link": null
+        },
+        {
+          "name": "negative_coords",
+          "shape": 7,
+          "type": "STRING",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "masks",
+          "type": "MASK",
+          "links": [
+            21
+          ]
+        },
+        {
+          "name": "bboxes",
+          "type": "BOUNDING_BOX",
+          "links": null
+        }
+      ],
+      "title": "Mask character 2",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "SAM3_Detect"
+      },
+      "widgets_values": [
+        0.5,
+        2,
+        false
+      ]
+    },
+    {
+      "id": 15,
+      "type": "GAPMultiCharacterReference",
+      "pos": [
+        -610,
+        1080
+      ],
+      "size": [
+        350,
+        340
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image_1",
+          "type": "IMAGE",
+          "link": 17
+        },
+        {
+          "name": "mask_1",
+          "shape": 7,
+          "type": "MASK",
+          "link": 20
+        },
+        {
+          "name": "image_2",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 19
+        },
+        {
+          "name": "mask_2",
+          "shape": 7,
+          "type": "MASK",
+          "link": 21
+        },
+        {
+          "name": "image_3",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "mask_3",
+          "shape": 7,
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "name": "image_4",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "mask_4",
+          "shape": 7,
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "name": "image_5",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "mask_5",
+          "shape": 7,
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "name": "image_6",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "mask_6",
+          "shape": 7,
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          },
+          "link": 43
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          },
+          "link": 46
+        }
+      ],
+      "outputs": [
+        {
+          "name": "reference_image",
+          "type": "IMAGE",
+          "links": [
+            22,
+            23
+          ]
+        },
+        {
+          "name": "reference_image_mask",
+          "type": "IMAGE",
+          "links": [
+            24,
+            52
+          ]
+        },
+        {
+          "name": "character_count",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "GAPMultiCharacterReference"
+      },
+      "widgets_values": [
+        896,
+        512,
+        true
+      ]
+    },
+    {
+      "id": 16,
+      "type": "UNETLoader",
+      "pos": [
+        -1950,
+        -800
+      ],
+      "size": [
+        490,
+        120
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            25
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "UNETLoader",
+        "models": [
+          {
+            "name": "wan2.1_14B_SCAIL_2_fp8_scaled.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/SCAIL-2/resolve/main/diffusion_models/wan2.1_14B_SCAIL_2_fp8_scaled.safetensors",
+            "directory": "diffusion_models"
+          }
+        ]
+      },
+      "widgets_values": [
+        "wan2.1_14B_SCAIL_2_fp8_scaled.safetensors",
+        "default"
+      ],
+      "title": "SCAIL-2 model (fp8 = half RAM; fp16 only if 64GB+ free)"
+    },
+    {
+      "id": 17,
+      "type": "LoraLoaderModelOnly",
+      "pos": [
+        -1400,
+        -820
+      ],
+      "size": [
+        470,
+        140
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 25
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            26
+          ]
+        }
+      ],
+      "title": "DPO LoRA",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "LoraLoaderModelOnly",
+        "models": [
+          {
+            "name": "wan2.1_SCAIL_2_DPO_lora_bf16.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/SCAIL-2/resolve/main/loras/wan2.1_SCAIL_2_DPO_lora_bf16.safetensors",
+            "directory": "loras"
+          }
+        ]
+      },
+      "widgets_values": [
+        "wan2.1_SCAIL_2_DPO_lora_bf16.safetensors",
+        1
+      ]
+    },
+    {
+      "id": 18,
+      "type": "LoraLoaderModelOnly",
+      "pos": [
+        -1400,
+        -630
+      ],
+      "size": [
+        470,
+        140
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 26
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            27
+          ]
+        }
+      ],
+      "title": "Distill LoRA (turbo; bypass for quality + steps 40 / cfg 5)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "LoraLoaderModelOnly",
+        "models": [
+          {
+            "name": "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+            "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+            "directory": "loras"
+          }
+        ]
+      },
+      "widgets_values": [
+        "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+        0.8
+      ]
+    },
+    {
+      "id": 28,
+      "type": "ModelSamplingSD3",
+      "pos": [
+        -870,
+        -800
+      ],
+      "size": [
+        300,
+        90
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 27
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            28
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "ModelSamplingSD3"
+      },
+      "widgets_values": [
+        5
+      ]
+    },
+    {
+      "id": 19,
+      "type": "CLIPLoader",
+      "pos": [
+        -1950,
+        -630
+      ],
+      "size": [
+        490,
+        140
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            29
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "CLIPLoader",
+        "models": [
+          {
+            "name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "directory": "text_encoders"
+          }
+        ]
+      },
+      "widgets_values": [
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "wan",
+        "default"
+      ]
+    },
+    {
+      "id": 20,
+      "type": "VAELoader",
+      "pos": [
+        -1950,
+        -440
+      ],
+      "size": [
+        490,
+        90
+      ],
+      "flags": {},
+      "order": 17,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            30
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "VAELoader",
+        "models": [
+          {
+            "name": "Wan2_1_VAE_bf16.safetensors",
+            "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_bf16.safetensors",
+            "directory": "vae"
+          }
+        ]
+      },
+      "widgets_values": [
+        "Wan2_1_VAE_bf16.safetensors"
+      ]
+    },
+    {
+      "id": 21,
+      "type": "CLIPVisionLoader",
+      "pos": [
+        -1950,
+        -300
+      ],
+      "size": [
+        490,
+        90
+      ],
+      "flags": {},
+      "order": 18,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP_VISION",
+          "type": "CLIP_VISION",
+          "links": [
+            31
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "CLIPVisionLoader",
+        "models": [
+          {
+            "name": "clip_vision_h.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors",
+            "directory": "clip_vision"
+          }
+        ]
+      },
+      "widgets_values": [
+        "clip_vision_h.safetensors"
+      ]
+    },
+    {
+      "id": 22,
+      "type": "CLIPVisionEncode",
+      "pos": [
+        -870,
+        -630
+      ],
+      "size": [
+        300,
+        100
+      ],
+      "flags": {},
+      "order": 19,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip_vision",
+          "type": "CLIP_VISION",
+          "link": 31
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 23
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CLIP_VISION_OUTPUT",
+          "type": "CLIP_VISION_OUTPUT",
+          "links": [
+            32
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "CLIPVisionEncode"
+      },
+      "widgets_values": [
+        "none"
+      ]
+    },
+    {
+      "id": 23,
+      "type": "GAPSCAIL2LongVideo",
+      "pos": [
+        40,
+        330
+      ],
+      "size": [
+        520,
+        1010
+      ],
+      "flags": {},
+      "order": 20,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 28
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 29
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 30
+        },
+        {
+          "name": "pose_video",
+          "type": "IMAGE",
+          "link": 6
+        },
+        {
+          "name": "pose_video_mask",
+          "type": "IMAGE",
+          "link": 15
+        },
+        {
+          "name": "reference_image",
+          "type": "IMAGE",
+          "link": 22
+        },
+        {
+          "name": "reference_image_mask",
+          "type": "IMAGE",
+          "link": 24
+        },
+        {
+          "name": "clip_vision_output",
+          "shape": 7,
+          "type": "CLIP_VISION_OUTPUT",
+          "link": 32
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          },
+          "link": 44
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          },
+          "link": 47
+        }
+      ],
+      "outputs": [
+        {
+          "name": "frames",
+          "type": "IMAGE",
+          "links": [
+            33
+          ]
+        },
+        {
+          "name": "report",
+          "type": "STRING",
+          "links": [
+            34
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "GAPSCAIL2LongVideo"
+      },
+      "widgets_values": [
+        "Cinematic footage of the scene from the driving video. {characters} Natural motion, consistent lighting, high detail, no text, no watermarks, no camera cuts.",
+        "",
+        "1: The first character is the person from the first reference image, fully recognizable, integrated naturally into the scene.\n2: The second character is the person from the second reference image, fully recognizable, integrated naturally into the scene.",
+        "# Optional frame-range prompts (uncomment and edit):\n# 0-151: the two characters walk through the scene together\n# 152-303: the first character sits down while the second walks away",
+        896,
+        512,
+        81,
+        5,
+        true,
+        1.0,
+        0.0,
+        1.0,
+        0,
+        "fixed",
+        6,
+        1.0,
+        "euler",
+        "simple",
+        "lab",
+        true,
+        0.001,
+        "new render",
+        "default",
+        "",
+        false,
+        true,
+        0.3,
+        "standard",
+        true
+      ]
+    },
+    {
+      "id": 24,
+      "type": "CreateVideo",
+      "pos": [
+        1100,
+        140
+      ],
+      "size": [
+        280,
+        120
+      ],
+      "flags": {},
+      "order": 21,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 33
+        },
+        {
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": 3
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "widget": {
+            "name": "fps"
+          },
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            35
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "CreateVideo"
+      },
+      "widgets_values": [
+        30,
+        8
+      ]
+    },
+    {
+      "id": 25,
+      "type": "SaveVideo",
+      "pos": [
+        1100,
+        330
+      ],
+      "size": [
+        640,
+        580
+      ],
+      "flags": {},
+      "order": 22,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 35
+        }
+      ],
+      "outputs": [],
+      "title": "Save Video (final, full length)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "video/GAP_SCAIL2",
+        "auto",
+        "auto"
+      ]
+    },
+    {
+      "id": 26,
+      "type": "PreviewAny",
+      "pos": [
+        1100,
+        970
+      ],
+      "size": [
+        640,
+        380
+      ],
+      "flags": {},
+      "order": 23,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 34
+        }
+      ],
+      "outputs": [],
+      "title": "Chunk / prompt report",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 27,
+      "type": "MarkdownNote",
+      "pos": [
+        -3340,
+        60
+      ],
+      "size": [
+        660,
+        1520
+      ],
+      "flags": {},
+      "order": 24,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "READ ME — GAP SCAIL-2 Long Video",
+      "properties": {},
+      "widgets_values": [
+        "# GAP SCAIL-2 Long Video — Multi-Character Replacement\n\nReplaces **1–6 people** in a driving video (**any length**) with your reference characters. One queue press renders the whole video: the orchestrator slices it into chunks, generates each chunk anchored on the previous one, adapts the prompt per chunk, and stitches everything back together with the original audio.\n\n## Quick start (follow the numbered groups)\n1. **① SETTINGS** — set width/height once (multiples of 32).\n2. **② DRIVING VIDEO** — load your source video.\n3. **③ CHARACTERS** — load 1–6 character images.\n4. Queue with the **PHASE node** (top of ⑥) on `1 - analyze only` → generation is skipped; check **④ MASK CHECK** video (who got which color), the **REF MASK preview** (③) and **⑧ FOOTAGE ANALYSIS** (how many characters + schedule template).\n5. Fill the prompts on the **⑥ GENERATE** node (see the cheat-sheet note beside it).\n6. Switch PHASE to `2 - generate video` and queue — analysis is cached; the final video lands in **⑦ OUTPUT**.\n\n## Identity colors (fixed by the model)\n| # | color | replaces |\n|---|-------|----------|\n| 1 | blue | first/leftmost person to appear |\n| 2 | red | second person |\n| 3 | green | third |\n| 4 | magenta / 5 cyan / 6 yellow | ... |\n\n## Memory guide (RTX 3090 class)\n- `chunk_length` **81** = trained value; drop to 65/49 if VRAM runs out.\n- `vae_decode = tiled` removes the decode VRAM spike at high resolutions.\n- System RAM: ~11 GB per 1000 source frames at 896×512.\n\n## Crash / bad chunk?\n- Crash or interrupt → set **cache_mode = resume** and queue again: finished chunks reload from disk and generation continues.\n- One bad chunk → `chunk_rerender = <its number>` + new seed → only that chunk regenerates.\n\n## Models\nDownload links for all models (fp8 recommended) are in the README: https://github.com/GeekatplayStudio/wan-scail2-gap — wan2.1_14B_SCAIL_2_fp8_scaled, DPO + lightx2v distill LoRAs, Wan2.1 VAE, umt5-xxl, clip_vision_h, sam3.1_multiplex.\n\n## Troubleshooting\n- **Wrong person replaced** → ④ note (object_indices remap).\n- **Character replaced by colors only, body stays human** (e.g. toy bear) → set that character's SUBJECT text (③), check the REF MASK preview, disable turbo (steps 40 / cfg 5), lower pose_strength ≈ 0.7 and pose_end ≈ 0.8 — full recipe in the ⑥ cheat sheet.\n- **System/RAM crash on long videos** → use the fp8 model (default; fp16 needs ~31 GB RAM alone), lower resolution, or split very long sources. After any crash set cache_mode = resume and queue again — finished chunks reload from disk.\n- **Identity drifts when character turns** → add *GAP Character Extra View* (③ note).\n- **Ghosting at a camera cut** → lower `scene_cut_threshold` so the cut is detected.\n- **Want a different take of one chunk** → cache_mode `resume` + `chunk_rerender` + new seed.\n\n---\nWorkflow by **Geekatplay Studio** — tutorials: [youtube.com/@geekatplay](https://www.youtube.com/@geekatplay)"
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 29,
+      "type": "GAPCharacterTimeline",
+      "pos": [
+        40,
+        1740
+      ],
+      "size": [
+        350,
+        250
+      ],
+      "flags": {},
+      "order": 25,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "pose_video_mask",
+          "type": "IMAGE",
+          "link": 36
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "widget": {
+            "name": "fps"
+          },
+          "link": 39
+        }
+      ],
+      "outputs": [
+        {
+          "name": "timeline",
+          "type": "STRING",
+          "links": [
+            37
+          ]
+        },
+        {
+          "name": "schedule_template",
+          "type": "STRING",
+          "links": [
+            38
+          ]
+        },
+        {
+          "name": "character_count",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "title": "Analyze footage: who appears when",
+      "properties": {
+        "Node name for S&R": "GAPCharacterTimeline"
+      },
+      "widgets_values": [
+        0.001,
+        12,
+        8,
+        0.0
+      ]
+    },
+    {
+      "id": 33,
+      "type": "PrimitiveInt",
+      "pos": [
+        -2600,
+        140
+      ],
+      "size": [
+        320,
+        120
+      ],
+      "flags": {},
+      "order": 28,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "INT",
+          "type": "INT",
+          "links": [
+            42,
+            43,
+            44
+          ]
+        }
+      ],
+      "title": "WIDTH (single source, multiple of 32)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "PrimitiveInt"
+      },
+      "widgets_values": [
+        896,
+        "fixed"
+      ]
+    },
+    {
+      "id": 34,
+      "type": "PrimitiveInt",
+      "pos": [
+        -2600,
+        320
+      ],
+      "size": [
+        320,
+        120
+      ],
+      "flags": {},
+      "order": 29,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "INT",
+          "type": "INT",
+          "links": [
+            45,
+            46,
+            47
+          ]
+        }
+      ],
+      "title": "HEIGHT (single source, multiple of 32)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "PrimitiveInt"
+      },
+      "widgets_values": [
+        512,
+        "fixed"
+      ]
+    },
+    {
+      "id": 32,
+      "type": "ImageBlend",
+      "pos": [
+        -600,
+        140
+      ],
+      "size": [
+        280,
+        140
+      ],
+      "flags": {},
+      "order": 30,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image1",
+          "type": "IMAGE",
+          "link": 40
+        },
+        {
+          "name": "image2",
+          "type": "IMAGE",
+          "link": 41
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            48
+          ]
+        }
+      ],
+      "title": "Overlay identity colors on video",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "ImageBlend"
+      },
+      "widgets_values": [
+        0.5,
+        "normal"
+      ]
+    },
+    {
+      "id": 35,
+      "type": "CreateVideo",
+      "pos": [
+        -600,
+        350
+      ],
+      "size": [
+        280,
+        120
+      ],
+      "flags": {},
+      "order": 31,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 48
+        },
+        {
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": null
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "widget": {
+            "name": "fps"
+          },
+          "link": 49
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            50
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "CreateVideo"
+      },
+      "widgets_values": [
+        30,
+        8
+      ]
+    },
+    {
+      "id": 36,
+      "type": "SaveVideo",
+      "pos": [
+        -600,
+        540
+      ],
+      "size": [
+        340,
+        340
+      ],
+      "flags": {},
+      "order": 32,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 50
+        }
+      ],
+      "outputs": [],
+      "title": "MASK CHECK: verify who got which color (1=blue, 2=red...)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "video/GAP_SCAIL2_mask_check",
+        "auto",
+        "auto"
+      ]
+    },
+    {
+      "id": 30,
+      "type": "PreviewAny",
+      "pos": [
+        450,
+        1740
+      ],
+      "size": [
+        500,
+        380
+      ],
+      "flags": {},
+      "order": 26,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 37
+        }
+      ],
+      "outputs": [],
+      "title": "Character timeline (how many refs you need)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 31,
+      "type": "PreviewAny",
+      "pos": [
+        1010,
+        1740
+      ],
+      "size": [
+        540,
+        380
+      ],
+      "flags": {},
+      "order": 27,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 38
+        }
+      ],
+      "outputs": [],
+      "title": "Schedule template -> copy into prompt_schedule, fill actions",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 37,
+      "type": "MarkdownNote",
+      "pos": [
+        -2600,
+        500
+      ],
+      "size": [
+        320,
+        340
+      ],
+      "flags": {},
+      "order": 77,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "① Resolution — set ONCE",
+      "properties": {},
+      "widgets_values": [
+        "### Resolution (single source)\nThese two values feed the video resize, the character reference builder and the generator — nothing else to keep in sync.\n\n- Must be **multiples of 32**.\n- `896×512` = landscape default; swap to `512×896` for portrait video.\n- Lower resolution = less VRAM + faster; SCAIL-2 works well around 0.5 MP."
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 38,
+      "type": "MarkdownNote",
+      "pos": [
+        -1480,
+        550
+      ],
+      "size": [
+        390,
+        330
+      ],
+      "flags": {},
+      "order": 78,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "④ Tracking & mask check",
+      "properties": {},
+      "widgets_values": [
+        "### People tracking\nSAM3 tracks every person across the **whole video in one pass**, so identity colors stay consistent across all chunks. The text prompt (default `human`) selects what to track — make it more specific in crowded scenes (e.g. `man in a suit`).\n\n### MASK CHECK video (saved on queue)\nIdentity colors blended over the footage — **verify who got which color before generating**: 1=blue, 2=red, 3=green, 4=magenta, 5=cyan, 6=yellow.\n\n**Wrong assignment?** Set `object_indices` on the *Create SCAIL-2 Colored Mask* node:\n- `1,0` → swap characters 1 and 2\n- `0,2` → keep persons 0 and 2, skip person 1 (not replaced)"
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 39,
+      "type": "MarkdownNote",
+      "pos": [
+        -1760,
+        1360
+      ],
+      "size": [
+        300,
+        300
+      ],
+      "flags": {},
+      "order": 79,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "③ Characters",
+      "properties": {},
+      "widgets_values": [
+        "### Character images\nOne clear image per character. *SAM3 Detect* masks the subject using the **SUBJECT text under each image** — set it to what the image actually contains:\n- human → `person`\n- plush toy → `toy bear` / `plush teddy bear`\n- robot, animal, creature → name it\n\n**Check the REF MASK preview** (below the builder): every character must appear as a colored silhouette (1=blue, 2=red). Black/partial = SAM3 didn't find it → fix the SUBJECT text.\n\n- Character 1 replaces the first/leftmost person in the video.\n- More characters (max 6): duplicate LoadImage + SUBJECT + Detect, wire to `image_3`/`mask_3`.\n- Stronger identity: add *GAP Character Extra View* between builder and generator."
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 40,
+      "type": "MarkdownNote",
+      "pos": [
+        620,
+        140
+      ],
+      "size": [
+        400,
+        1200
+      ],
+      "flags": {},
+      "order": 80,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "⑥ Generator options — cheat sheet",
+      "properties": {},
+      "widgets_values": [
+        "### Prompts\n- **base_prompt** — the scene/style; put `{characters}` where character descriptions go.\n- **character_prompts** — one line per character: `1: a man in a red jacket…`. Injected automatically **only in chunks where that character is on screen**.\n- **prompt_schedule** — per-frame-range actions: `0-151: they dance`. Get a pre-filled template from ⑧ FOOTAGE ANALYSIS. Empty ranges fall back to base_prompt. `#` lines are comments.\n\n### Chunking / memory\n- **chunk_length** 81 (trained). Lower → less VRAM. **overlap** 5 = frames carried between chunks.\n- **vae_decode** `tiled` → much lower VRAM during decode.\n\n### Scene cuts\n- **detect_scene_cuts** on: chunk boundaries snap to hard cuts, anchor resets at each cut (no ghosting). **scene_cut_threshold** lower = more sensitive.\n\n### New render vs resume\n- **cache_mode** `new render` (default) = every queue renders fresh; finished chunks are still checkpointed to disk as you go.\n- Crash / interrupt? Switch to `resume` and queue → continues from the last finished chunk.\n- **chunk_rerender** (needs `resume`): `3` or `2,5` or `4-6` + a new seed → regenerate only those chunks. **rerender_cascade** also redoes everything after (perfect continuity).\n- One **cache_id** per project; if the video/settings changed, resume detects it and safely starts fresh.\n\n### Speed / quality\n- Turbo (default): distill LoRA on, **steps 6, cfg 1**.\n- Max quality: bypass the *Distill LoRA* node (CTRL+B) in ⑤ MODELS, set **steps 40, cfg 5**.\n- **seed**: per-chunk seed = seed + chunk number.\n\n### Sync & color\n- **pad_to_source_length** on: output matches source frame count (audio stays in sync).\n- **color_match** `lab`: cancels color drift between chunks.\n\n### Live progress\nThe node shows `chunk i/N | frames | characters` while working; the console logs the full plan and every prompt. The **report** output (⑦) is the final per-chunk summary.\n\n### Non-human characters (toy bear, robot, creature…)\nIf the output only picks up colors but keeps a human body:\n1. Set the character's **SUBJECT text** (group ③) to what it is — e.g. `pink plush teddy bear` — and confirm the REF MASK preview shows its full silhouette.\n2. Describe it explicitly in **character_prompts**: `1: a fluffy pink plush teddy bear with round ears and stubby arms`.\n3. **Turn off turbo** — cfg 1 barely follows prompts. Bypass the *Distill LoRA* (⑤, CTRL+B) and set **steps 40, cfg 5**.\n4. Loosen the pose so the human body shape isn't forced: **pose_strength ≈ 0.7**, **pose_end ≈ 0.8** (lower further for very different proportions)."
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 41,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        2050
+      ],
+      "size": [
+        350,
+        290
+      ],
+      "flags": {},
+      "order": 81,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "⑧ Footage analysis — phase 1",
+      "properties": {},
+      "widgets_values": [
+        "### Analyze before you render (no muting needed)\nThe **PHASE** node in ⑥ controls execution:\n\n1. Keep phase = `1 - analyze only` and queue → tracking, MASK CHECK video and this analysis run; **generation is skipped automatically**.\n2. Review: **timeline** = how many characters + when each appears; **schedule_template** = ready-made `start-end:` markers.\n3. Copy the template into **prompt_schedule**, fill in actions, load the right number of character images.\n4. Switch phase to `2 - generate video`, queue again — analysis is cached, generation starts immediately."
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 42,
+      "type": "GAPPhaseGate",
+      "pos": [
+        40,
+        140
+      ],
+      "size": [
+        520,
+        130
+      ],
+      "flags": {},
+      "order": 50,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "frames",
+          "type": "IMAGE",
+          "link": 51
+        }
+      ],
+      "outputs": [
+        {
+          "name": "frames",
+          "type": "IMAGE",
+          "links": [
+            6
+          ]
+        }
+      ],
+      "title": "PHASE: 1 = analyze only -> review -> 2 = generate",
+      "properties": {
+        "Node name for S&R": "GAPPhaseGate"
+      },
+      "widgets_values": [
+        "1 - analyze only"
+      ]
+    },
+    {
+      "id": 43,
+      "type": "PreviewImage",
+      "pos": [
+        -610,
+        1470
+      ],
+      "size": [
+        350,
+        190
+      ],
+      "flags": {},
+      "order": 51,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 52
+        }
+      ],
+      "outputs": [],
+      "title": "REF MASK CHECK: each character must show in its color",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 44,
+      "type": "CLIPTextEncode",
+      "pos": [
+        -2180,
+        1520
+      ],
+      "size": [
+        350,
+        130
+      ],
+      "flags": {},
+      "order": 52,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 53
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            12
+          ]
+        }
+      ],
+      "title": "Character 1 SUBJECT ('person', 'toy bear', 'robot'...)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "person"
+      ]
+    },
+    {
+      "id": 45,
+      "type": "CLIPTextEncode",
+      "pos": [
+        -1400,
+        1520
+      ],
+      "size": [
+        350,
+        130
+      ],
+      "flags": {},
+      "order": 52,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 54
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            13
+          ]
+        }
+      ],
+      "title": "Character 2 SUBJECT ('person', 'toy bear', 'robot'...)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "person"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "VIDEO"
+    ],
+    [
+      2,
+      2,
+      0,
+      5,
+      0,
+      "IMAGE"
+    ],
+    [
+      3,
+      2,
+      1,
+      24,
+      1,
+      "AUDIO"
+    ],
+    [
+      4,
+      2,
+      2,
+      24,
+      2,
+      "FLOAT"
+    ],
+    [
+      5,
+      5,
+      0,
+      8,
+      0,
+      "IMAGE"
+    ],
+    [
+      6,
+      42,
+      0,
+      23,
+      3,
+      "IMAGE"
+    ],
+    [
+      7,
+      6,
+      0,
+      8,
+      1,
+      "MODEL"
+    ],
+    [
+      8,
+      6,
+      0,
+      13,
+      0,
+      "MODEL"
+    ],
+    [
+      9,
+      6,
+      0,
+      14,
+      0,
+      "MODEL"
+    ],
+    [
+      10,
+      6,
+      1,
+      7,
+      0,
+      "CLIP"
+    ],
+    [
+      11,
+      7,
+      0,
+      8,
+      3,
+      "CONDITIONING"
+    ],
+    [
+      12,
+      44,
+      0,
+      13,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      13,
+      45,
+      0,
+      14,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      14,
+      8,
+      0,
+      9,
+      0,
+      "SAM3_TRACK_DATA"
+    ],
+    [
+      15,
+      9,
+      0,
+      23,
+      4,
+      "IMAGE"
+    ],
+    [
+      16,
+      10,
+      0,
+      13,
+      1,
+      "IMAGE"
+    ],
+    [
+      17,
+      10,
+      0,
+      15,
+      0,
+      "IMAGE"
+    ],
+    [
+      18,
+      11,
+      0,
+      14,
+      1,
+      "IMAGE"
+    ],
+    [
+      19,
+      11,
+      0,
+      15,
+      2,
+      "IMAGE"
+    ],
+    [
+      20,
+      13,
+      0,
+      15,
+      1,
+      "MASK"
+    ],
+    [
+      21,
+      14,
+      0,
+      15,
+      3,
+      "MASK"
+    ],
+    [
+      22,
+      15,
+      0,
+      23,
+      5,
+      "IMAGE"
+    ],
+    [
+      23,
+      15,
+      0,
+      22,
+      1,
+      "IMAGE"
+    ],
+    [
+      24,
+      15,
+      1,
+      23,
+      6,
+      "IMAGE"
+    ],
+    [
+      25,
+      16,
+      0,
+      17,
+      0,
+      "MODEL"
+    ],
+    [
+      26,
+      17,
+      0,
+      18,
+      0,
+      "MODEL"
+    ],
+    [
+      27,
+      18,
+      0,
+      28,
+      0,
+      "MODEL"
+    ],
+    [
+      28,
+      28,
+      0,
+      23,
+      0,
+      "MODEL"
+    ],
+    [
+      29,
+      19,
+      0,
+      23,
+      1,
+      "CLIP"
+    ],
+    [
+      30,
+      20,
+      0,
+      23,
+      2,
+      "VAE"
+    ],
+    [
+      31,
+      21,
+      0,
+      22,
+      0,
+      "CLIP_VISION"
+    ],
+    [
+      32,
+      22,
+      0,
+      23,
+      7,
+      "CLIP_VISION_OUTPUT"
+    ],
+    [
+      33,
+      23,
+      0,
+      24,
+      0,
+      "IMAGE"
+    ],
+    [
+      34,
+      23,
+      1,
+      26,
+      0,
+      "STRING"
+    ],
+    [
+      35,
+      24,
+      0,
+      25,
+      0,
+      "VIDEO"
+    ],
+    [
+      36,
+      9,
+      0,
+      29,
+      0,
+      "IMAGE"
+    ],
+    [
+      37,
+      29,
+      0,
+      30,
+      0,
+      "STRING"
+    ],
+    [
+      38,
+      29,
+      1,
+      31,
+      0,
+      "STRING"
+    ],
+    [
+      39,
+      2,
+      2,
+      29,
+      1,
+      "FLOAT"
+    ],
+    [
+      40,
+      5,
+      0,
+      32,
+      0,
+      "IMAGE"
+    ],
+    [
+      41,
+      9,
+      0,
+      32,
+      1,
+      "IMAGE"
+    ],
+    [
+      42,
+      33,
+      0,
+      5,
+      1,
+      "INT"
+    ],
+    [
+      43,
+      33,
+      0,
+      15,
+      12,
+      "INT"
+    ],
+    [
+      44,
+      33,
+      0,
+      23,
+      8,
+      "INT"
+    ],
+    [
+      45,
+      34,
+      0,
+      5,
+      2,
+      "INT"
+    ],
+    [
+      46,
+      34,
+      0,
+      15,
+      13,
+      "INT"
+    ],
+    [
+      47,
+      34,
+      0,
+      23,
+      9,
+      "INT"
+    ],
+    [
+      48,
+      32,
+      0,
+      35,
+      0,
+      "IMAGE"
+    ],
+    [
+      49,
+      2,
+      2,
+      35,
+      2,
+      "FLOAT"
+    ],
+    [
+      50,
+      35,
+      0,
+      36,
+      0,
+      "VIDEO"
+    ],
+    [
+      51,
+      5,
+      0,
+      42,
+      0,
+      "IMAGE"
+    ],
+    [
+      52,
+      15,
+      1,
+      43,
+      0,
+      "IMAGE"
+    ],
+    [
+      53,
+      6,
+      1,
+      44,
+      0,
+      "CLIP"
+    ],
+    [
+      54,
+      6,
+      1,
+      45,
+      0,
+      "CLIP"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "① SETTINGS — resolution (set once)",
+      "bounding": [
+        -2620,
+        60,
+        380,
+        800
+      ],
+      "color": "#8f8f2f",
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "② DRIVING VIDEO (any length)",
+      "bounding": [
+        -2200,
+        60,
+        660,
+        800
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "③ CHARACTERS (1–6 reference images)",
+      "bounding": [
+        -2200,
+        1000,
+        1960,
+        700
+      ],
+      "color": "#a1309b",
+      "flags": {}
+    },
+    {
+      "id": 4,
+      "title": "④ PEOPLE TRACKING + MASK CHECK",
+      "bounding": [
+        -1500,
+        60,
+        1260,
+        850
+      ],
+      "color": "#b06634",
+      "flags": {}
+    },
+    {
+      "id": 5,
+      "title": "⑤ MODELS",
+      "bounding": [
+        -1970,
+        -880,
+        1440,
+        880
+      ],
+      "color": "#444444",
+      "flags": {}
+    },
+    {
+      "id": 6,
+      "title": "⑥ GENERATE — phase 1 analyze, phase 2 render",
+      "bounding": [
+        20,
+        60,
+        1020,
+        1330
+      ],
+      "color": "#2f8f4f",
+      "flags": {}
+    },
+    {
+      "id": 7,
+      "title": "⑦ OUTPUT — final video + report",
+      "bounding": [
+        1080,
+        60,
+        680,
+        1330
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 8,
+      "title": "⑧ FOOTAGE ANALYSIS (optional dry-run: mute ⑥, queue once)",
+      "bounding": [
+        20,
+        1660,
+        1550,
+        720
+      ],
+      "color": "#b06634",
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}
