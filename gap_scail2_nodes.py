@@ -857,17 +857,31 @@ class GAPCharacterExtraView:
         )
 
 
+def _phase_decision(phase, key, stored_key):
+    """Returns (pass_through, key_to_store). 'auto' blocks the first time it
+    sees a video (analysis pass) and passes on every following queue."""
+    if phase.startswith("2"):
+        return True, stored_key
+    if phase.startswith("1"):
+        return False, key
+    # auto
+    if stored_key == key:
+        return True, stored_key
+    return False, key
+
+
 class GAPPhaseGate:
     """Two-phase execution without muting nodes.
 
-    Phase 1: everything upstream (tracking, mask check, footage analysis) runs;
-    the generator and all its downstream nodes are skipped silently.
-    Phase 2: frames pass through and generation runs. Analysis results are
-    cached by ComfyUI, so the phase-2 queue goes straight to generation."""
+    auto (default): the first Run on a video executes only analysis (tracking,
+    mask check, footage analysis) and skips generation; every following Run
+    renders. Manual '1' / '2' force either behavior. The `next_step` STRING
+    output tells the user what just happened and what to do next — wire it to
+    a Preview Any node."""
 
     CATEGORY = "GAP/SCAIL2"
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("frames",)
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("frames", "next_step")
     FUNCTION = "gate"
 
     @classmethod
@@ -875,19 +889,55 @@ class GAPPhaseGate:
         return {
             "required": {
                 "frames": ("IMAGE",),
-                "phase": (["1 - analyze only", "2 - generate video"], {"default": "1 - analyze only", "tooltip": "Phase 1: queue runs tracking + mask check + footage analysis, generation is skipped. Review the outputs, fill your prompts, switch to phase 2 and queue again."}),
+                "phase": (["auto (Run 1 analyzes, Run 2 renders)", "1 - analyze only", "2 - generate video"],
+                          {"default": "auto (Run 1 analyzes, Run 2 renders)",
+                           "tooltip": "auto: the first Run on a new video does analysis only (generation skipped); just press Run again to render. '1' always analyzes, '2' always renders."}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
+    @classmethod
+    def IS_CHANGED(cls, frames, phase, unique_id=None):
+        return float("nan")  # must re-evaluate every queue, or 'Run again' would hit the cache and do nothing
+
     def gate(self, frames, phase, unique_id=None):
-        if phase.startswith("1"):
-            from comfy_execution.graph_utils import ExecutionBlocker
-            _progress_text("PHASE 1: analysis only — review mask check + timeline, fill prompts, then set phase 2", unique_id)
-            log.info("phase gate: analysis only - generation skipped")
-            return (ExecutionBlocker(None),)
-        _progress_text("PHASE 2: generating", unique_id)
-        return (frames,)
+        # cheap content key: shape + first/last frame means — enough to notice a new video
+        key = "{}|{:.6f}|{:.6f}".format(
+            tuple(frames.shape), float(frames[0].float().mean()), float(frames[-1].float().mean()))
+        state_path = os.path.join(_cache_dir("_phase_state"), "state.json")
+        stored_key = None
+        try:
+            with open(state_path, "r", encoding="utf-8") as f:
+                stored_key = json.load(f).get("analyzed_key")
+        except Exception:
+            pass
+
+        pass_through, store = _phase_decision(phase, key, stored_key)
+        if store != stored_key:
+            with open(state_path, "w", encoding="utf-8") as f:
+                json.dump({"analyzed_key": store}, f)
+
+        if pass_through:
+            msg = ("PHASE 2 — RENDERING\n\n"
+                   "Generation is running — watch the progress text on the generator node\n"
+                   "and the console for the chunk plan. The finished video lands in OUTPUT.")
+            _progress_text("PHASE 2: rendering", unique_id)
+            log.info("phase gate: rendering pass")
+            return (frames, msg)
+
+        from comfy_execution.graph_utils import ExecutionBlocker
+        again = ("Press Run again — rendering starts automatically."
+                 if phase.startswith("auto") else
+                 "Set phase to '2 - generate video' (or 'auto') and press Run.")
+        msg = ("PHASE 1 COMPLETE — ANALYSIS ONLY (generation was skipped on purpose)\n\n"
+               "Review, then continue:\n"
+               "  1. MASK CHECK video (group 4): is each person the right color?\n"
+               "  2. REF MASK preview (group 3): full colored silhouette per character?\n"
+               "  3. FOOTAGE ANALYSIS (group 8): copy schedule_template into prompt_schedule, fill actions.\n"
+               "  4. " + again)
+        _progress_text("PHASE 1 done — press Run again to render", unique_id)
+        log.info("phase gate: analysis pass complete - next queue will render")
+        return (ExecutionBlocker(None), msg)
 
 
 class GAPSCAIL2Planner:

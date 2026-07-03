@@ -1,8 +1,8 @@
 {
   "id": "a7c1f2d3-4b5e-4f6a-8b9c-0d1e2f3a4b5c",
   "revision": 0,
-  "last_node_id": 45,
-  "last_link_id": 54,
+  "last_node_id": 46,
+  "last_link_id": 55,
   "nodes": [
     {
       "id": 1,
@@ -1063,7 +1063,7 @@
       "type": "GAPSCAIL2LongVideo",
       "pos": [
         40,
-        330
+        560
       ],
       "size": [
         520,
@@ -1316,7 +1316,7 @@
       "title": "READ ME — GAP SCAIL-2 Long Video",
       "properties": {},
       "widgets_values": [
-        "# GAP SCAIL-2 Long Video — Multi-Character Replacement\n\nReplaces **1–6 people** in a driving video (**any length**) with your reference characters. One queue press renders the whole video: the orchestrator slices it into chunks, generates each chunk anchored on the previous one, adapts the prompt per chunk, and stitches everything back together with the original audio.\n\n## Quick start (follow the numbered groups)\n1. **① SETTINGS** — set width/height once (multiples of 32).\n2. **② DRIVING VIDEO** — load your source video.\n3. **③ CHARACTERS** — load 1–6 character images.\n4. Queue with the **PHASE node** (top of ⑥) on `1 - analyze only` → generation is skipped; check **④ MASK CHECK** video (who got which color), the **REF MASK preview** (③) and **⑧ FOOTAGE ANALYSIS** (how many characters + schedule template).\n5. Fill the prompts on the **⑥ GENERATE** node (see the cheat-sheet note beside it).\n6. Switch PHASE to `2 - generate video` and queue — analysis is cached; the final video lands in **⑦ OUTPUT**.\n\n## Identity colors (fixed by the model)\n| # | color | replaces |\n|---|-------|----------|\n| 1 | blue | first/leftmost person to appear |\n| 2 | red | second person |\n| 3 | green | third |\n| 4 | magenta / 5 cyan / 6 yellow | ... |\n\n## Memory guide (RTX 3090 class)\n- `chunk_length` **81** = trained value; drop to 65/49 if VRAM runs out.\n- `vae_decode = tiled` removes the decode VRAM spike at high resolutions.\n- System RAM: ~11 GB per 1000 source frames at 896×512.\n\n## Crash / bad chunk?\n- Crash or interrupt → set **cache_mode = resume** and queue again: finished chunks reload from disk and generation continues.\n- One bad chunk → `chunk_rerender = <its number>` + new seed → only that chunk regenerates.\n\n## Models\nDownload links for all models (fp8 recommended) are in the README: https://github.com/GeekatplayStudio/wan-scail2-gap — wan2.1_14B_SCAIL_2_fp8_scaled, DPO + lightx2v distill LoRAs, Wan2.1 VAE, umt5-xxl, clip_vision_h, sam3.1_multiplex.\n\n## Troubleshooting\n- **Wrong person replaced** → ④ note (object_indices remap).\n- **Character replaced by colors only, body stays human** (e.g. toy bear) → set that character's SUBJECT text (③), check the REF MASK preview, disable turbo (steps 40 / cfg 5), lower pose_strength ≈ 0.7 and pose_end ≈ 0.8 — full recipe in the ⑥ cheat sheet.\n- **System/RAM crash on long videos** → use the fp8 model (default; fp16 needs ~31 GB RAM alone), lower resolution, or split very long sources. After any crash set cache_mode = resume and queue again — finished chunks reload from disk.\n- **Identity drifts when character turns** → add *GAP Character Extra View* (③ note).\n- **Ghosting at a camera cut** → lower `scene_cut_threshold` so the cut is detected.\n- **Want a different take of one chunk** → cache_mode `resume` + `chunk_rerender` + new seed.\n\n---\nWorkflow by **Geekatplay Studio** — tutorials: [youtube.com/@geekatplay](https://www.youtube.com/@geekatplay)"
+        "# GAP SCAIL-2 Long Video — Multi-Character Replacement\n\nReplaces **1–6 people** in a driving video (**any length**) with your reference characters. One queue press renders the whole video: the orchestrator slices it into chunks, generates each chunk anchored on the previous one, adapts the prompt per chunk, and stitches everything back together with the original audio.\n\n## Quick start (follow the numbered groups)\n1. **① SETTINGS** — set width/height once (multiples of 32).\n2. **② DRIVING VIDEO** — load your source video.\n3. **③ CHARACTERS** — load 1–6 character images.\n4. Press **Run** — the first Run on a video is an **analysis pass** (generation skipped automatically): check **④ MASK CHECK** video, the **REF MASK preview** (③), **⑧ FOOTAGE ANALYSIS**, and follow the **NEXT STEP panel** in ⑥.\n5. Fill the prompts on the **⑥ GENERATE** node (see the cheat-sheet note beside it).\n6. Press **Run again** — rendering starts automatically (analysis is cached); the final video lands in **⑦ OUTPUT**.\n\n## Identity colors (fixed by the model)\n| # | color | replaces |\n|---|-------|----------|\n| 1 | blue | first/leftmost person to appear |\n| 2 | red | second person |\n| 3 | green | third |\n| 4 | magenta / 5 cyan / 6 yellow | ... |\n\n## Memory guide (RTX 3090 class)\n- `chunk_length` **81** = trained value; drop to 65/49 if VRAM runs out.\n- `vae_decode = tiled` removes the decode VRAM spike at high resolutions.\n- System RAM: ~11 GB per 1000 source frames at 896×512.\n\n## Crash / bad chunk?\n- Crash or interrupt → set **cache_mode = resume** and queue again: finished chunks reload from disk and generation continues.\n- One bad chunk → `chunk_rerender = <its number>` + new seed → only that chunk regenerates.\n\n## Models\nDownload links for all models (fp8 recommended) are in the README: https://github.com/GeekatplayStudio/wan-scail2-gap — wan2.1_14B_SCAIL_2_fp8_scaled, DPO + lightx2v distill LoRAs, Wan2.1 VAE, umt5-xxl, clip_vision_h, sam3.1_multiplex.\n\n## Troubleshooting\n- **Wrong person replaced** → ④ note (object_indices remap).\n- **Character replaced by colors only, body stays human** (e.g. toy bear) → set that character's SUBJECT text (③), check the REF MASK preview, disable turbo (steps 40 / cfg 5), lower pose_strength ≈ 0.7 and pose_end ≈ 0.8 — full recipe in the ⑥ cheat sheet.\n- **System/RAM crash on long videos** → use the fp8 model (default; fp16 needs ~31 GB RAM alone), lower resolution, or split very long sources. After any crash set cache_mode = resume and queue again — finished chunks reload from disk.\n- **Identity drifts when character turns** → add *GAP Character Extra View* (③ note).\n- **Ghosting at a camera cut** → lower `scene_cut_threshold` so the cut is detected.\n- **Want a different take of one chunk** → cache_mode `resume` + `chunk_rerender` + new seed.\n\n---\nWorkflow by **Geekatplay Studio** — tutorials: [youtube.com/@geekatplay](https://www.youtube.com/@geekatplay)\n\n## Log noise\n`ConnectionResetError [WinError 10054]` lines in the console are harmless — that's the browser tab reconnecting its websocket, not a workflow error. If the log says `Prompt executed`, the run succeeded."
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -1724,7 +1724,7 @@
       ],
       "size": [
         400,
-        1200
+        1430
       ],
       "flags": {},
       "order": 80,
@@ -1758,7 +1758,7 @@
       "title": "⑧ Footage analysis — phase 1",
       "properties": {},
       "widgets_values": [
-        "### Analyze before you render (no muting needed)\nThe **PHASE** node in ⑥ controls execution:\n\n1. Keep phase = `1 - analyze only` and queue → tracking, MASK CHECK video and this analysis run; **generation is skipped automatically**.\n2. Review: **timeline** = how many characters + when each appears; **schedule_template** = ready-made `start-end:` markers.\n3. Copy the template into **prompt_schedule**, fill in actions, load the right number of character images.\n4. Switch phase to `2 - generate video`, queue again — analysis is cached, generation starts immediately."
+        "### Analyze before you render (automatic)\nThe **PHASE GATE** (top of ⑥) defaults to `auto`:\n\n1. **Run 1** → tracking, MASK CHECK video and this analysis run; generation is skipped. The **NEXT STEP** panel under the gate tells you exactly what to review.\n2. Copy **schedule_template** into **prompt_schedule**, fill in the actions; check masks.\n3. **Run 2** (just press Run again) → rendering starts; analysis is cached.\n\nNew video loaded → the next Run is an analysis pass again, automatically.\nForce behavior anytime: phase `1` = always analyze, `2` = always render."
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -1772,7 +1772,7 @@
       ],
       "size": [
         520,
-        130
+        110
       ],
       "flags": {},
       "order": 50,
@@ -1791,14 +1791,21 @@
           "links": [
             6
           ]
+        },
+        {
+          "name": "next_step",
+          "type": "STRING",
+          "links": [
+            55
+          ]
         }
       ],
-      "title": "PHASE: 1 = analyze only -> review -> 2 = generate",
+      "title": "PHASE GATE — Run 1: analyze | Run 2: render (auto)",
       "properties": {
         "Node name for S&R": "GAPPhaseGate"
       },
       "widgets_values": [
-        "1 - analyze only"
+        "auto (Run 1 analyzes, Run 2 renders)"
       ]
     },
     {
@@ -1907,6 +1914,35 @@
       "widgets_values": [
         "person"
       ]
+    },
+    {
+      "id": 46,
+      "type": "PreviewAny",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        520,
+        210
+      ],
+      "flags": {},
+      "order": 55,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 55
+        }
+      ],
+      "outputs": [],
+      "title": ">>> NEXT STEP — read this after every Run <<<",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": []
     }
   ],
   "links": [
@@ -2341,6 +2377,14 @@
       45,
       0,
       "CLIP"
+    ],
+    [
+      55,
+      42,
+      1,
+      46,
+      0,
+      "STRING"
     ]
   ],
   "groups": [
@@ -2406,12 +2450,12 @@
     },
     {
       "id": 6,
-      "title": "⑥ GENERATE — phase 1 analyze, phase 2 render",
+      "title": "⑥ GENERATE — Run 1 analyzes, Run 2 renders (auto phase)",
       "bounding": [
         20,
         60,
         1020,
-        1330
+        1560
       ],
       "color": "#2f8f4f",
       "flags": {}

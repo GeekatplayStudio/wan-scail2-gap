@@ -62,13 +62,16 @@ exactly what to set.
 1. Load the driving video (②) and your character images (③); set resolution once (①).
 2. Give each character image its **SUBJECT text** — what SAM3 should segment: `person`,
    `pink plush teddy bear`, `robot`…
-3. Queue with the **PHASE node** on `1 - analyze only`. Generation is skipped; you get:
+3. Press **Run**. The first Run on a video is an **analysis pass** — generation is skipped
+   automatically (phase gate in `auto` mode) and the **NEXT STEP panel** tells you what to
+   review:
    - **MASK CHECK video** (④) — who got which identity color,
    - **REF MASK preview** (③) — each character's silhouette in its color,
    - **FOOTAGE ANALYSIS** (⑧) — character count, entry/exit frames, and a ready-made
      `prompt_schedule` template.
-4. Fill the prompts on the generator (⑥ — cheat-sheet note right beside it), switch PHASE to
-   `2 - generate video`, queue. Analysis is cached; generation starts immediately.
+4. Fill the prompts on the generator (⑥ — cheat-sheet note right beside it) and press
+   **Run again** — rendering starts immediately (analysis is cached). Loading a different
+   video automatically makes the next Run an analysis pass again.
 5. The final video (with audio) and a per-chunk report land in ⑦.
 
 ## Nodes
@@ -80,7 +83,7 @@ exactly what to set.
 | **GAP Character Extra View** | Appends an extra reference view (back view / close-up) for one character — chain freely. |
 | **GAP Character Timeline** | Footage analysis: who appears when + auto-generated schedule template. |
 | **GAP SCAIL-2 Chunk Planner** | Dry-run: chunk boundaries and exact per-chunk prompts without loading the diffusion model. |
-| **GAP Phase Gate** | The 1=analyze / 2=generate switch (uses ExecutionBlocker — no muting). |
+| **GAP Phase Gate** | Auto two-phase execution: Run 1 analyzes, Run 2 renders (manual 1/2 override available). Its `next_step` output feeds the NEXT STEP panel. |
 
 ## New render vs resume (cache_mode)
 
@@ -115,6 +118,12 @@ If the output "takes the colors but keeps a human body":
   where that character is on screen, so entering/leaving characters are handled automatically.
 - **prompt_schedule** — frame-range actions (`0-151: they dance`); generate the skeleton with
   the footage analysis and fill in the blanks. Empty ranges fall back to `base_prompt`.
+
+## Log noise
+
+Console lines like `ConnectionResetError [WinError 10054]` are harmless — that's the browser
+tab reconnecting its websocket, not a workflow failure. If the log says `Prompt executed`,
+the run succeeded.
 
 ## Memory guide
 
