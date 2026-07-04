@@ -138,6 +138,28 @@ Fixed in v1.2:
   loading more character images or excluding the extra person via `object_indices` on the
   Colored Mask node.
 
+## Replacing many characters (3-6)
+
+The SCAIL-2 architecture supports up to 6 identities (its color palette), but two practical
+limits apply — the generator now prints these advisories automatically when they matter:
+
+1. **Turbo mode kills multi-identity binding.** The distill LoRA + cfg 1.0 + 6 steps is a
+   generic speed distillation, not trained for SCAIL's multi-identity task: with 3+ characters
+   it typically collapses to only 1-2 convincing replacements (everything else keeps the
+   original person). For 3+ characters, **always use quality mode**: bypass the Distill LoRA
+   (CTRL+B) and set **steps 40 / cfg 5**.
+2. **For 4-6 characters, use multi-pass replacement** — each pass handles 2-3 identities at
+   full strength:
+   - **Pass 1**: on the *Colored Mask* node set `object_indices` to the first people, e.g.
+     `0,1,2`; load only those 3 character images; render and save.
+   - **Pass 2**: load the pass-1 output as the new driving video, run the analysis phase,
+     check the MASK CHECK video to find the remaining original people, select them with
+     `object_indices`, load the remaining character images (they are characters 1-3 of this
+     pass), render.
+   - Repeat if needed. Use a different `cache_id` per pass.
+3. Resolution helps: 6 people in a 512p frame leaves few pixels per identity — go to
+   1088×608+ if VRAM allows (lower `chunk_length` to compensate).
+
 ## Characters don't resemble the references?
 
 Fixed in v1.1 — three causes were addressed; if resemblance is still weak:

@@ -739,143 +739,11 @@
       ]
     },
     {
-      "id": 23,
-      "type": "GAPSCAIL2LongVideo",
-      "pos": [
-        40,
-        560
-      ],
-      "size": [
-        520,
-        1010
-      ],
-      "flags": {},
-      "order": 45,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 28
-        },
-        {
-          "name": "clip",
-          "type": "CLIP",
-          "link": 29
-        },
-        {
-          "name": "vae",
-          "type": "VAE",
-          "link": 30
-        },
-        {
-          "name": "pose_video",
-          "type": "IMAGE",
-          "link": 6
-        },
-        {
-          "name": "pose_video_mask",
-          "type": "IMAGE",
-          "link": 15
-        },
-        {
-          "name": "reference_image",
-          "type": "IMAGE",
-          "link": 22
-        },
-        {
-          "name": "reference_image_mask",
-          "type": "IMAGE",
-          "link": 24
-        },
-        {
-          "name": "clip_vision_output",
-          "shape": 7,
-          "type": "CLIP_VISION_OUTPUT",
-          "link": 32
-        },
-        {
-          "name": "character_count",
-          "shape": 7,
-          "type": "INT",
-          "link": 56
-        },
-        {
-          "name": "width",
-          "type": "INT",
-          "widget": {
-            "name": "width"
-          },
-          "link": 44
-        },
-        {
-          "name": "height",
-          "type": "INT",
-          "widget": {
-            "name": "height"
-          },
-          "link": 47
-        }
-      ],
-      "outputs": [
-        {
-          "name": "frames",
-          "type": "IMAGE",
-          "links": [
-            33
-          ]
-        },
-        {
-          "name": "report",
-          "type": "STRING",
-          "links": [
-            34
-          ]
-        }
-      ],
-      "properties": {
-        "aux_id": "GeekatplayStudio/wan-scail2-gap",
-        "ver": "74f351334bf7076fa1a4e55946130ae5aed20b1e",
-        "Node name for S&R": "GAPSCAIL2LongVideo"
-      },
-      "widgets_values": [
-        "Cinematic footage of the scene from the driving video. {characters} Natural motion, consistent lighting, high detail, no text, no watermarks, no camera cuts.",
-        "",
-        "1: The first character is the person from the first reference image, fully recognizable, integrated naturally into the scene.\n2: The second character is the person from the second reference image, fully recognizable, integrated naturally into the scene.",
-        "# Optional frame-range prompts (uncomment and edit):\n# 0-151: the two characters walk through the scene together\n# 152-303: the first character sits down while the second walks away",
-        896,
-        512,
-        81,
-        5,
-        true,
-        1,
-        0,
-        1,
-        0,
-        "fixed",
-        6,
-        1,
-        "euler",
-        "simple",
-        "lab",
-        true,
-        0.001,
-        "new render",
-        "default",
-        "",
-        false,
-        true,
-        0.3,
-        "standard",
-        true
-      ]
-    },
-    {
       "id": 24,
       "type": "CreateVideo",
       "pos": [
-        1100,
-        140
+        1265.0439999999999,
+        150.648
       ],
       "size": [
         280,
@@ -928,8 +796,8 @@
       "id": 25,
       "type": "SaveVideo",
       "pos": [
-        1100,
-        330
+        1265.0439999999999,
+        340.6479999999999
       ],
       "size": [
         640,
@@ -968,8 +836,8 @@
       "id": 26,
       "type": "PreviewAny",
       "pos": [
-        1100,
-        970
+        1265.0439999999999,
+        980.6480000000003
       ],
       "size": [
         640,
@@ -1032,8 +900,8 @@
       "id": 29,
       "type": "GAPCharacterTimeline",
       "pos": [
-        40,
-        1740
+        55.005121669999994,
+        2033.6716669699993
       ],
       "size": [
         350,
@@ -1281,7 +1149,7 @@
       ],
       "size": [
         434.2310546875,
-        340
+        346.13203124999995
       ],
       "flags": {},
       "order": 55,
@@ -1310,86 +1178,6 @@
         "video/GAP_SCAIL2_mask_check",
         "auto",
         "auto"
-      ]
-    },
-    {
-      "id": 30,
-      "type": "PreviewAny",
-      "pos": [
-        450,
-        1740
-      ],
-      "size": [
-        500,
-        380
-      ],
-      "flags": {},
-      "order": 50,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "source",
-          "type": "*",
-          "link": 37
-        }
-      ],
-      "outputs": [
-        {
-          "name": "STRING",
-          "type": "STRING",
-          "links": null
-        }
-      ],
-      "title": "Character timeline (how many refs you need)",
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.27.0",
-        "Node name for S&R": "PreviewAny"
-      },
-      "widgets_values": [
-        null,
-        null,
-        false
-      ]
-    },
-    {
-      "id": 31,
-      "type": "PreviewAny",
-      "pos": [
-        1010,
-        1740
-      ],
-      "size": [
-        540,
-        380
-      ],
-      "flags": {},
-      "order": 51,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "source",
-          "type": "*",
-          "link": 38
-        }
-      ],
-      "outputs": [
-        {
-          "name": "STRING",
-          "type": "STRING",
-          "links": null
-        }
-      ],
-      "title": "Schedule template -> copy into prompt_schedule, fill actions",
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.27.0",
-        "Node name for S&R": "PreviewAny"
-      },
-      "widgets_values": [
-        null,
-        null,
-        false
       ]
     },
     {
@@ -1492,8 +1280,8 @@
       "id": 41,
       "type": "MarkdownNote",
       "pos": [
-        40,
-        2050
+        55.005121669999994,
+        2343.6716669699986
       ],
       "size": [
         350,
@@ -1521,7 +1309,7 @@
       ],
       "size": [
         466.98203125,
-        190
+        246
       ],
       "flags": {},
       "order": 41,
@@ -1657,46 +1445,6 @@
         }
       ],
       "title": ">>> NEXT STEP — read this after every Run <<<",
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.27.0",
-        "Node name for S&R": "PreviewAny"
-      },
-      "widgets_values": [
-        null,
-        null,
-        false
-      ]
-    },
-    {
-      "id": 47,
-      "type": "PreviewAny",
-      "pos": [
-        560,
-        2130
-      ],
-      "size": [
-        543.913671875,
-        340
-      ],
-      "flags": {},
-      "order": 52,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "source",
-          "type": "*",
-          "link": 57
-        }
-      ],
-      "outputs": [
-        {
-          "name": "STRING",
-          "type": "STRING",
-          "links": null
-        }
-      ],
-      "title": "CHARACTER PROMPTS TEMPLATE - copy into character_prompts, then edit",
       "properties": {
         "cnr_id": "comfy-core",
         "ver": "0.27.0",
@@ -2693,6 +2441,86 @@
       ]
     },
     {
+      "id": 47,
+      "type": "PreviewAny",
+      "pos": [
+        471.93248167000013,
+        2510.6392069699987
+      ],
+      "size": [
+        543.913671875,
+        340
+      ],
+      "flags": {},
+      "order": 52,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 57
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "CHARACTER PROMPTS TEMPLATE - copy into character_prompts, then edit",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.27.0",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [
+        null,
+        null,
+        false
+      ]
+    },
+    {
+      "id": 31,
+      "type": "PreviewAny",
+      "pos": [
+        1025.00512167,
+        2033.6716669699993
+      ],
+      "size": [
+        540,
+        380
+      ],
+      "flags": {},
+      "order": 51,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 38
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "Schedule template -> copy into prompt_schedule, fill actions",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.27.0",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [
+        null,
+        null,
+        false
+      ]
+    },
+    {
       "id": 42,
       "type": "GAPPhaseGate",
       "pos": [
@@ -2736,7 +2564,179 @@
         "Node name for S&R": "GAPPhaseGate"
       },
       "widgets_values": [
-        "1 - analyze only"
+        "2 - generate video"
+      ]
+    },
+    {
+      "id": 23,
+      "type": "GAPSCAIL2LongVideo",
+      "pos": [
+        51.97899999999999,
+        566.6549999999992
+      ],
+      "size": [
+        520,
+        1264
+      ],
+      "flags": {},
+      "order": 45,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 28
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 29
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 30
+        },
+        {
+          "name": "pose_video",
+          "type": "IMAGE",
+          "link": 6
+        },
+        {
+          "name": "pose_video_mask",
+          "type": "IMAGE",
+          "link": 15
+        },
+        {
+          "name": "reference_image",
+          "type": "IMAGE",
+          "link": 22
+        },
+        {
+          "name": "reference_image_mask",
+          "type": "IMAGE",
+          "link": 24
+        },
+        {
+          "name": "clip_vision_output",
+          "shape": 7,
+          "type": "CLIP_VISION_OUTPUT",
+          "link": 32
+        },
+        {
+          "name": "character_count",
+          "shape": 7,
+          "type": "INT",
+          "link": 56
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          },
+          "link": 44
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          },
+          "link": 47
+        }
+      ],
+      "outputs": [
+        {
+          "name": "frames",
+          "type": "IMAGE",
+          "links": [
+            33
+          ]
+        },
+        {
+          "name": "report",
+          "type": "STRING",
+          "links": [
+            34
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "GeekatplayStudio/wan-scail2-gap",
+        "ver": "74f351334bf7076fa1a4e55946130ae5aed20b1e",
+        "Node name for S&R": "GAPSCAIL2LongVideo"
+      },
+      "widgets_values": [
+        "Cinematic footage of the scene from the driving video. {characters} Natural motion, consistent lighting, high detail, no text, no watermarks, no camera cuts.",
+        "",
+        "# Auto-generated character_prompts template - copy this into the generator's\n# character_prompts field, then EDIT each line: replace 'the subject from\n# reference image N' with what that reference actually shows (species,\n# clothing, distinguishing features). Every detected character needs its own\n# line here, or it renders with only a generic fallback description.\n1: The first character is the subject from reference image 1 (blue), fully recognizable and closely matching that reference image.\n2: The second character is the subject from reference image 2 (red), fully recognizable and closely matching that reference image.\n3: The third character is the subject from reference image 3 (green), fully recognizable and closely matching that reference image.\n4: The fourth character is the subject from reference image 4 (magenta), fully recognizable and closely matching that reference image.\n5: The fifth character is the subject from reference image 5 (cyan), fully recognizable and closely matching that reference image.\n6: The sixth character is the subject from reference image 6 (yellow), fully recognizable and closely matching that reference image.",
+        "# Auto-generated schedule template - fill the action after each range.\n# Lines starting with # are ignored; ranges left empty fall back to base_prompt.\n# frames 0-459 (0.0s-15.3s) | visible: character 1 (blue) + character 2 (red) + character 3 (green) + character 4 (magenta) + character 5 (cyan) + character 6 (yellow)\n0-459: ",
+        896,
+        512,
+        81,
+        5,
+        true,
+        1,
+        0,
+        1,
+        0,
+        "fixed",
+        6,
+        1,
+        "euler",
+        "simple",
+        "lab",
+        true,
+        0.001,
+        "new render",
+        "default",
+        "",
+        false,
+        true,
+        0.3,
+        "standard",
+        true
+      ]
+    },
+    {
+      "id": 30,
+      "type": "PreviewAny",
+      "pos": [
+        465.00512167000005,
+        2033.6716669699993
+      ],
+      "size": [
+        500,
+        380
+      ],
+      "flags": {},
+      "order": 50,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 37
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "Character timeline (how many refs you need)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.27.0",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [
+        null,
+        null,
+        false
       ]
     }
   ],
@@ -3433,8 +3433,8 @@
       "bounding": [
         -1500,
         60,
-        1260,
-        850
+        1371.46661812,
+        873.5794769099998
       ],
       "color": "#b06634",
       "flags": {}
@@ -3457,8 +3457,8 @@
       "bounding": [
         20,
         60,
-        1020,
-        1560
+        1129.3230293099996,
+        1875.1075550699998
       ],
       "color": "#2f8f4f",
       "flags": {}
@@ -3467,8 +3467,8 @@
       "id": 7,
       "title": "⑦ OUTPUT — final video + report",
       "bounding": [
-        1080,
-        60,
+        1245.0439999999999,
+        70.648,
         680,
         1330
       ],
@@ -3479,10 +3479,10 @@
       "id": 8,
       "title": "⑧ FOOTAGE ANALYSIS (optional dry-run: mute ⑥, queue once)",
       "bounding": [
-        20,
-        1660,
-        2080,
-        850
+        35.005121669999994,
+        1953.6716669699993,
+        2158.91499,
+        1188.2070999999996
       ],
       "color": "#b06634",
       "flags": {}
@@ -3491,10 +3491,10 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.35049389948139237,
+      "scale": 0.7513148009015777,
       "offset": [
-        3609.4403139740707,
-        798.3334305260342
+        260.67167978480376,
+        149.91418580469943
       ]
     },
     "frontendVersion": "1.45.20"

@@ -474,7 +474,7 @@ def _encode(clip, text, cache):
     return cache[text]
 
 
-def _build_chunk_report(chunks, per_chunk_info, total_frames, chunk_length, overlap, cuts=(), unmatched_identities=None, n_refs=None):
+def _build_chunk_report(chunks, per_chunk_info, total_frames, chunk_length, overlap, cuts=(), unmatched_identities=None, n_refs=None, advisories=()):
     n_shots = (chunks[-1]["shot"] + 1) if chunks else 1
     lines = [
         "GAP SCAIL-2 long video plan",
@@ -490,6 +490,9 @@ def _build_chunk_report(chunks, per_chunk_info, total_frames, chunk_length, over
                       "reference character(s) are loaded - they have no reference view and will "
                       "NOT be replaced. Load more character images, or exclude them via "
                       "object_indices on the Colored Mask node.")
+    for a in advisories:
+        lines.append("")
+        lines.append(a)
     lines.append("")
     for i, (ch, info) in enumerate(zip(chunks, per_chunk_info)):
         ids, prompt = info[0], info[1]
@@ -733,6 +736,25 @@ class GAPSCAIL2LongVideo:
         enc_cache = {}
         negative_cond = None  # encoded lazily, only if something actually generates
 
+        # ---- multi-character practical advisories (before any GPU time is spent) ----
+        advisories = []
+        if auto_character_prompts:
+            video_ids = torch.where(_presence_matrix(pose_video_mask, presence_threshold).any(dim=0))[0].tolist()
+            n_ids = len(video_ids)
+            if n_ids >= 3 and cfg <= 2.0:
+                advisories.append(
+                    f"ADVICE: {n_ids} characters with turbo settings (cfg={cfg:g}, few steps) usually "
+                    "collapses to only 1-2 convincing replacements - step-distillation sacrifices "
+                    "multi-identity binding. Bypass the Distill LoRA (CTRL+B) and use steps 40 / cfg 5.")
+            if n_ids >= 4:
+                advisories.append(
+                    f"ADVICE: for {n_ids} characters, best results come from MULTI-PASS replacement: "
+                    "replace 2-3 characters per pass (select them with object_indices on the Colored "
+                    "Mask node + load only those references), then feed the finished video back in as "
+                    "the driving video for the next pass. See README 'Replacing many characters'.")
+            for a in advisories:
+                log.warning(a)
+
         out_expected = sum(c["new"] for c in chunks)
         n_shots = chunks[-1]["shot"] + 1
         log.info("plan: %d source frames -> %d chunk(s) of %d frames (overlap %d), %d shot(s), %d output frames",
@@ -854,7 +876,8 @@ class GAPSCAIL2LongVideo:
         result = torch.cat(parts, dim=0)
 
         report = _build_chunk_report(chunks, per_chunk_info, total_frames, chunk_length, overlap,
-                                      cuts=cuts, unmatched_identities=all_unmatched, n_refs=n_refs)
+                                      cuts=cuts, unmatched_identities=all_unmatched, n_refs=n_refs,
+                                      advisories=advisories)
         if use_cache:
             report = report.replace("\n\n", f"\ncache: '{cache_id}' | reused {n_cached} | generated {n_chunks - n_cached}\n\n", 1)
         _progress_text(f"done: {n_chunks} chunk(s) ({n_cached} cached), {result.shape[0]} frames", unique_id)
