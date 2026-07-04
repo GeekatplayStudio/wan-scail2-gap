@@ -498,7 +498,7 @@
       ],
       "flags": {},
       "order": 29,
-      "mode": 0,
+      "mode": 4,
       "inputs": [
         {
           "name": "model",
@@ -515,7 +515,7 @@
           ]
         }
       ],
-      "title": "Distill LoRA (turbo; bypass for quality + steps 40 / cfg 5)",
+      "title": "Distill LoRA — BYPASSED for 6-char quality (re-enable + steps 6/cfg 1 for fast previews)",
       "properties": {
         "cnr_id": "comfy-core",
         "ver": "0.27.0",
@@ -888,10 +888,10 @@
       "mode": 0,
       "inputs": [],
       "outputs": [],
-      "title": "READ ME — GAP SCAIL-2 Long Video",
+      "title": "READ ME — 6-Character Quality Preset",
       "properties": {},
       "widgets_values": [
-        "# GAP SCAIL-2 Long Video — Multi-Character Replacement\n\nReplaces **1–6 people** in a driving video (**any length**) with your reference characters. One queue press renders the whole video: the orchestrator slices it into chunks, generates each chunk anchored on the previous one, adapts the prompt per chunk, and stitches everything back together with the original audio.\n\n## Quick start (follow the numbered groups)\n1. **① SETTINGS** — set width/height once (multiples of 32).\n2. **② DRIVING VIDEO** — load your source video.\n3. **③ CHARACTERS** — load 1–6 character images.\n4. Press **Run** — the first Run on a video is an **analysis pass** (generation skipped automatically): check **④ MASK CHECK** video, the **REF MASK preview** (③), **⑧ FOOTAGE ANALYSIS**, and follow the **NEXT STEP panel** in ⑥.\n5. Fill the prompts on the **⑥ GENERATE** node (see the cheat-sheet note beside it).\n6. Press **Run again** — rendering starts automatically (analysis is cached); the final video lands in **⑦ OUTPUT**.\n\n## Identity colors (fixed by the model)\n| # | color | replaces |\n|---|-------|----------|\n| 1 | blue | first/leftmost person to appear |\n| 2 | red | second person |\n| 3 | green | third |\n| 4 | magenta / 5 cyan / 6 yellow | ... |\n\n## Memory guide (RTX 3090 class)\n- `chunk_length` **81** = trained value; drop to 65/49 if VRAM runs out.\n- `vae_decode = tiled` removes the decode VRAM spike at high resolutions.\n- System RAM: ~11 GB per 1000 source frames at 896×512.\n\n## Crash / bad chunk?\n- Crash or interrupt → set **cache_mode = resume** and queue again: finished chunks reload from disk and generation continues.\n- One bad chunk → `chunk_rerender = <its number>` + new seed → only that chunk regenerates.\n\n## Models\nDownload links for all models (fp8 recommended) are in the README: https://github.com/GeekatplayStudio/wan-scail2-gap — wan2.1_14B_SCAIL_2_fp8_scaled, DPO + lightx2v distill LoRAs, Wan2.1 VAE, umt5-xxl, clip_vision_h, sam3.1_multiplex.\n\n## Troubleshooting\n- **Wrong person replaced** → ④ note (object_indices remap).\n- **Character replaced by colors only, body stays human** (e.g. toy bear) → set that character's SUBJECT text (③), check the REF MASK preview, disable turbo (steps 40 / cfg 5), lower pose_strength ≈ 0.7 and pose_end ≈ 0.8 — full recipe in the ⑥ cheat sheet.\n- **Only 1-2 of several characters actually resemble their reference** → almost always a missing character_prompts line: EVERY detected character needs its own `N: description` line (copy the auto-generated CHARACTER PROMPTS TEMPLATE from ⑧) - missing ones now get a generic fallback automatically, but a real description works much better. Also check the report for a WARNING about identities with no reference view at all (wire character_count from the builder into the generator to enable this check).\n- **System/RAM crash on long videos** → use the fp8 model (default; fp16 needs ~31 GB RAM alone), lower resolution, or split very long sources. After any crash set cache_mode = resume and queue again — finished chunks reload from disk.\n- **Identity drifts when character turns** → add *GAP Character Extra View* (③ note).\n- **Ghosting at a camera cut** → lower `scene_cut_threshold` so the cut is detected.\n- **Want a different take of one chunk** → cache_mode `resume` + `chunk_rerender` + new seed.\n\n---\nWorkflow by **Geekatplay Studio** — tutorials: [youtube.com/@geekatplay](https://www.youtube.com/@geekatplay)\n\n## Log noise\n`ConnectionResetError [WinError 10054]` lines in the console are harmless — that's the browser tab reconnecting its websocket, not a workflow error. If the log says `Prompt executed`, the run succeeded."
+        "# 6-CHARACTER QUALITY PRESET\n\nThis preset is tuned for replacing up to 6 characters at once:\n- **Quality mode is ON**: the Distill LoRA is bypassed, steps 40 / cfg 5. Turbo (cfg 1) collapses multi-identity binding to 1-2 replacements - do not re-enable it for final renders. Expect roughly 25-35 min per 81-frame chunk on an RTX 3090 at 896x512.\n- For fast previews only: un-bypass the Distill LoRA (CTRL+B) and set steps 6 / cfg 1, then switch back before the real render.\n- If some identities still hold on to the original person, use **multi-pass**: object_indices `0,1,2` on the Colored Mask node + first 3 refs -> render -> feed the output back as driving video for the remaining 3 (new cache_id per pass).\n- Optional: raise WIDTH/HEIGHT to 1088x608 for more pixels per identity (slower; lower chunk_length if VRAM runs out).\n\n---\n\n# GAP SCAIL-2 Long Video — Multi-Character Replacement\n\nReplaces **1–6 people** in a driving video (**any length**) with your reference characters. One queue press renders the whole video: the orchestrator slices it into chunks, generates each chunk anchored on the previous one, adapts the prompt per chunk, and stitches everything back together with the original audio.\n\n## Quick start (follow the numbered groups)\n1. **① SETTINGS** — set width/height once (multiples of 32).\n2. **② DRIVING VIDEO** — load your source video.\n3. **③ CHARACTERS** — load 1–6 character images.\n4. Press **Run** — the first Run on a video is an **analysis pass** (generation skipped automatically): check **④ MASK CHECK** video, the **REF MASK preview** (③), **⑧ FOOTAGE ANALYSIS**, and follow the **NEXT STEP panel** in ⑥.\n5. Fill the prompts on the **⑥ GENERATE** node (see the cheat-sheet note beside it).\n6. Press **Run again** — rendering starts automatically (analysis is cached); the final video lands in **⑦ OUTPUT**.\n\n## Identity colors (fixed by the model)\n| # | color | replaces |\n|---|-------|----------|\n| 1 | blue | first/leftmost person to appear |\n| 2 | red | second person |\n| 3 | green | third |\n| 4 | magenta / 5 cyan / 6 yellow | ... |\n\n## Memory guide (RTX 3090 class)\n- `chunk_length` **81** = trained value; drop to 65/49 if VRAM runs out.\n- `vae_decode = tiled` removes the decode VRAM spike at high resolutions.\n- System RAM: ~11 GB per 1000 source frames at 896×512.\n\n## Crash / bad chunk?\n- Crash or interrupt → set **cache_mode = resume** and queue again: finished chunks reload from disk and generation continues.\n- One bad chunk → `chunk_rerender = <its number>` + new seed → only that chunk regenerates.\n\n## Models\nDownload links for all models (fp8 recommended) are in the README: https://github.com/GeekatplayStudio/wan-scail2-gap — wan2.1_14B_SCAIL_2_fp8_scaled, DPO + lightx2v distill LoRAs, Wan2.1 VAE, umt5-xxl, clip_vision_h, sam3.1_multiplex.\n\n## Troubleshooting\n- **Wrong person replaced** → ④ note (object_indices remap).\n- **Character replaced by colors only, body stays human** (e.g. toy bear) → set that character's SUBJECT text (③), check the REF MASK preview, disable turbo (steps 40 / cfg 5), lower pose_strength ≈ 0.7 and pose_end ≈ 0.8 — full recipe in the ⑥ cheat sheet.\n- **Only 1-2 of several characters actually resemble their reference** → almost always a missing character_prompts line: EVERY detected character needs its own `N: description` line (copy the auto-generated CHARACTER PROMPTS TEMPLATE from ⑧) - missing ones now get a generic fallback automatically, but a real description works much better. Also check the report for a WARNING about identities with no reference view at all (wire character_count from the builder into the generator to enable this check).\n- **System/RAM crash on long videos** → use the fp8 model (default; fp16 needs ~31 GB RAM alone), lower resolution, or split very long sources. After any crash set cache_mode = resume and queue again — finished chunks reload from disk.\n- **Identity drifts when character turns** → add *GAP Character Extra View* (③ note).\n- **Ghosting at a camera cut** → lower `scene_cut_threshold` so the cut is detected.\n- **Want a different take of one chunk** → cache_mode `resume` + `chunk_rerender` + new seed.\n\n---\nWorkflow by **Geekatplay Studio** — tutorials: [youtube.com/@geekatplay](https://www.youtube.com/@geekatplay)\n\n## Log noise\n`ConnectionResetError [WinError 10054]` lines in the console are harmless — that's the browser tab reconnecting its websocket, not a workflow error. If the log says `Prompt executed`, the run succeeded."
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -1527,7 +1527,7 @@
           ]
         }
       ],
-      "title": "Character 1 SUBJECT ('person', 'toy bear', 'robot'...)",
+      "title": "Character 3 SUBJECT ('person', 'toy bear', 'robot'...)",
       "properties": {
         "cnr_id": "comfy-core",
         "ver": "0.27.0",
@@ -1567,7 +1567,7 @@
           ]
         }
       ],
-      "title": "Character 1 SUBJECT ('person', 'toy bear', 'robot'...)",
+      "title": "Character 4 SUBJECT ('person', 'toy bear', 'robot'...)",
       "properties": {
         "cnr_id": "comfy-core",
         "ver": "0.27.0",
@@ -1607,7 +1607,7 @@
           ]
         }
       ],
-      "title": "Character 1 SUBJECT ('person', 'toy bear', 'robot'...)",
+      "title": "Character 5 SUBJECT ('person', 'toy bear', 'robot'...)",
       "properties": {
         "cnr_id": "comfy-core",
         "ver": "0.27.0",
@@ -1647,7 +1647,7 @@
           ]
         }
       ],
-      "title": "Character 1 SUBJECT ('person', 'toy bear', 'robot'...)",
+      "title": "Character 6 SUBJECT ('person', 'toy bear', 'robot'...)",
       "properties": {
         "cnr_id": "comfy-core",
         "ver": "0.27.0",
@@ -2682,22 +2682,23 @@
         1,
         0,
         "fixed",
-        6,
-        1,
+        40,
+        5.0,
         "euler",
         "simple",
         "lab",
         true,
         0.001,
         "new render",
-        "default",
+        "6char",
         "",
         false,
         true,
         0.3,
         "standard",
         true
-      ]
+      ],
+      "title": "GENERATE — 6 characters, QUALITY MODE (steps 40 / cfg 5)"
     },
     {
       "id": 30,
