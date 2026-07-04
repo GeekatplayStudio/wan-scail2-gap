@@ -111,6 +111,33 @@ If the output "takes the colors but keeps a human body":
 4. **Loosen the pose**: `pose_strength ≈ 0.7`, `pose_end ≈ 0.8` (lower for very different
    body proportions).
 
+## Only some characters got replaced (v1.2 fix)
+
+Root cause: any detected character **without its own line in `character_prompts`** was
+silently sent to the model with **zero text description** — the example workflow ships
+with only 2 lines pre-filled (for characters 1 and 2), so testing with 5-6 characters
+without adding lines 3-6 meant those identities had no text guidance at all, and only the
+described ones resembled their reference well.
+
+Fixed in v1.2:
+
+- **Automatic fallback description** — any detected character missing from
+  `character_prompts` now gets a generic-but-real description instead of nothing
+  (`"The third character is the subject from reference image 3 (green), fully
+  recognizable..."`). Still works if you never touch `character_prompts` at all, but a
+  specific description resembles the reference much better.
+- **CHARACTER PROMPTS TEMPLATE** — the footage-analysis phase now also outputs a
+  ready-to-copy template with one line per detected character (mirrors the existing
+  `schedule_template`). Copy it into `character_prompts` and edit each line with what
+  that reference actually shows.
+- **Reference-count mismatch warning** — wire `character_count` (from **GAP
+  Multi-Character Reference**) into the generator's new optional `character_count` input.
+  If the driving video has *more* tracked identities than reference images you loaded,
+  the report and console now warn by name/color — those extra identities have no
+  reference view at all and cannot be replaced, no matter what text you write. Fix by
+  loading more character images or excluding the extra person via `object_indices` on the
+  Colored Mask node.
+
 ## Characters don't resemble the references?
 
 Fixed in v1.1 — three causes were addressed; if resemblance is still weak:

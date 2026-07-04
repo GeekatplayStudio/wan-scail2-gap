@@ -1,8 +1,8 @@
 {
   "id": "a7c1f2d3-4b5e-4f6a-8b9c-0d1e2f3a4b5c",
   "revision": 0,
-  "last_node_id": 46,
-  "last_link_id": 55,
+  "last_node_id": 47,
+  "last_link_id": 57,
   "nodes": [
     {
       "id": 1,
@@ -717,7 +717,9 @@
         {
           "name": "character_count",
           "type": "INT",
-          "links": null
+          "links": [
+            56
+          ]
         }
       ],
       "properties": {
@@ -1136,6 +1138,11 @@
             "name": "height"
           },
           "link": 47
+        },
+        {
+          "name": "character_count",
+          "type": "INT",
+          "link": 56
         }
       ],
       "outputs": [
@@ -1323,7 +1330,7 @@
       "title": "READ ME — GAP SCAIL-2 Long Video",
       "properties": {},
       "widgets_values": [
-        "# GAP SCAIL-2 Long Video — Multi-Character Replacement\n\nReplaces **1–6 people** in a driving video (**any length**) with your reference characters. One queue press renders the whole video: the orchestrator slices it into chunks, generates each chunk anchored on the previous one, adapts the prompt per chunk, and stitches everything back together with the original audio.\n\n## Quick start (follow the numbered groups)\n1. **① SETTINGS** — set width/height once (multiples of 32).\n2. **② DRIVING VIDEO** — load your source video.\n3. **③ CHARACTERS** — load 1–6 character images.\n4. Press **Run** — the first Run on a video is an **analysis pass** (generation skipped automatically): check **④ MASK CHECK** video, the **REF MASK preview** (③), **⑧ FOOTAGE ANALYSIS**, and follow the **NEXT STEP panel** in ⑥.\n5. Fill the prompts on the **⑥ GENERATE** node (see the cheat-sheet note beside it).\n6. Press **Run again** — rendering starts automatically (analysis is cached); the final video lands in **⑦ OUTPUT**.\n\n## Identity colors (fixed by the model)\n| # | color | replaces |\n|---|-------|----------|\n| 1 | blue | first/leftmost person to appear |\n| 2 | red | second person |\n| 3 | green | third |\n| 4 | magenta / 5 cyan / 6 yellow | ... |\n\n## Memory guide (RTX 3090 class)\n- `chunk_length` **81** = trained value; drop to 65/49 if VRAM runs out.\n- `vae_decode = tiled` removes the decode VRAM spike at high resolutions.\n- System RAM: ~11 GB per 1000 source frames at 896×512.\n\n## Crash / bad chunk?\n- Crash or interrupt → set **cache_mode = resume** and queue again: finished chunks reload from disk and generation continues.\n- One bad chunk → `chunk_rerender = <its number>` + new seed → only that chunk regenerates.\n\n## Models\nDownload links for all models (fp8 recommended) are in the README: https://github.com/GeekatplayStudio/wan-scail2-gap — wan2.1_14B_SCAIL_2_fp8_scaled, DPO + lightx2v distill LoRAs, Wan2.1 VAE, umt5-xxl, clip_vision_h, sam3.1_multiplex.\n\n## Troubleshooting\n- **Wrong person replaced** → ④ note (object_indices remap).\n- **Character replaced by colors only, body stays human** (e.g. toy bear) → set that character's SUBJECT text (③), check the REF MASK preview, disable turbo (steps 40 / cfg 5), lower pose_strength ≈ 0.7 and pose_end ≈ 0.8 — full recipe in the ⑥ cheat sheet.\n- **System/RAM crash on long videos** → use the fp8 model (default; fp16 needs ~31 GB RAM alone), lower resolution, or split very long sources. After any crash set cache_mode = resume and queue again — finished chunks reload from disk.\n- **Identity drifts when character turns** → add *GAP Character Extra View* (③ note).\n- **Ghosting at a camera cut** → lower `scene_cut_threshold` so the cut is detected.\n- **Want a different take of one chunk** → cache_mode `resume` + `chunk_rerender` + new seed.\n\n---\nWorkflow by **Geekatplay Studio** — tutorials: [youtube.com/@geekatplay](https://www.youtube.com/@geekatplay)\n\n## Log noise\n`ConnectionResetError [WinError 10054]` lines in the console are harmless — that's the browser tab reconnecting its websocket, not a workflow error. If the log says `Prompt executed`, the run succeeded."
+        "# GAP SCAIL-2 Long Video — Multi-Character Replacement\n\nReplaces **1–6 people** in a driving video (**any length**) with your reference characters. One queue press renders the whole video: the orchestrator slices it into chunks, generates each chunk anchored on the previous one, adapts the prompt per chunk, and stitches everything back together with the original audio.\n\n## Quick start (follow the numbered groups)\n1. **① SETTINGS** — set width/height once (multiples of 32).\n2. **② DRIVING VIDEO** — load your source video.\n3. **③ CHARACTERS** — load 1–6 character images.\n4. Press **Run** — the first Run on a video is an **analysis pass** (generation skipped automatically): check **④ MASK CHECK** video, the **REF MASK preview** (③), **⑧ FOOTAGE ANALYSIS**, and follow the **NEXT STEP panel** in ⑥.\n5. Fill the prompts on the **⑥ GENERATE** node (see the cheat-sheet note beside it).\n6. Press **Run again** — rendering starts automatically (analysis is cached); the final video lands in **⑦ OUTPUT**.\n\n## Identity colors (fixed by the model)\n| # | color | replaces |\n|---|-------|----------|\n| 1 | blue | first/leftmost person to appear |\n| 2 | red | second person |\n| 3 | green | third |\n| 4 | magenta / 5 cyan / 6 yellow | ... |\n\n## Memory guide (RTX 3090 class)\n- `chunk_length` **81** = trained value; drop to 65/49 if VRAM runs out.\n- `vae_decode = tiled` removes the decode VRAM spike at high resolutions.\n- System RAM: ~11 GB per 1000 source frames at 896×512.\n\n## Crash / bad chunk?\n- Crash or interrupt → set **cache_mode = resume** and queue again: finished chunks reload from disk and generation continues.\n- One bad chunk → `chunk_rerender = <its number>` + new seed → only that chunk regenerates.\n\n## Models\nDownload links for all models (fp8 recommended) are in the README: https://github.com/GeekatplayStudio/wan-scail2-gap — wan2.1_14B_SCAIL_2_fp8_scaled, DPO + lightx2v distill LoRAs, Wan2.1 VAE, umt5-xxl, clip_vision_h, sam3.1_multiplex.\n\n## Troubleshooting\n- **Wrong person replaced** → ④ note (object_indices remap).\n- **Character replaced by colors only, body stays human** (e.g. toy bear) → set that character's SUBJECT text (③), check the REF MASK preview, disable turbo (steps 40 / cfg 5), lower pose_strength ≈ 0.7 and pose_end ≈ 0.8 — full recipe in the ⑥ cheat sheet.\n- **Only 1-2 of several characters actually resemble their reference** → almost always a missing character_prompts line: EVERY detected character needs its own `N: description` line (copy the auto-generated CHARACTER PROMPTS TEMPLATE from ⑧) - missing ones now get a generic fallback automatically, but a real description works much better. Also check the report for a WARNING about identities with no reference view at all (wire character_count from the builder into the generator to enable this check).\n- **System/RAM crash on long videos** → use the fp8 model (default; fp16 needs ~31 GB RAM alone), lower resolution, or split very long sources. After any crash set cache_mode = resume and queue again — finished chunks reload from disk.\n- **Identity drifts when character turns** → add *GAP Character Extra View* (③ note).\n- **Ghosting at a camera cut** → lower `scene_cut_threshold` so the cut is detected.\n- **Want a different take of one chunk** → cache_mode `resume` + `chunk_rerender` + new seed.\n\n---\nWorkflow by **Geekatplay Studio** — tutorials: [youtube.com/@geekatplay](https://www.youtube.com/@geekatplay)\n\n## Log noise\n`ConnectionResetError [WinError 10054]` lines in the console are harmless — that's the browser tab reconnecting its websocket, not a workflow error. If the log says `Prompt executed`, the run succeeded."
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -1376,6 +1383,13 @@
           "name": "character_count",
           "type": "INT",
           "links": null
+        },
+        {
+          "name": "character_prompts_template",
+          "type": "STRING",
+          "links": [
+            57
+          ]
         }
       ],
       "title": "Analyze footage: who appears when",
@@ -1741,7 +1755,7 @@
       "title": "⑥ Generator options — cheat sheet",
       "properties": {},
       "widgets_values": [
-        "### Prompts\n- **base_prompt** — the scene/style; put `{characters}` where character descriptions go.\n- **character_prompts** — one line per character: `1: a man in a red jacket…`. Injected automatically **only in chunks where that character is on screen**.\n- **prompt_schedule** — per-frame-range actions: `0-151: they dance`. Get a pre-filled template from ⑧ FOOTAGE ANALYSIS. Empty ranges fall back to base_prompt. `#` lines are comments.\n\n### Chunking / memory\n- **chunk_length** 81 (trained). Lower → less VRAM. **overlap** 5 = frames carried between chunks.\n- **vae_decode** `tiled` → much lower VRAM during decode.\n\n### Scene cuts\n- **detect_scene_cuts** on: chunk boundaries snap to hard cuts, anchor resets at each cut (no ghosting). **scene_cut_threshold** lower = more sensitive.\n\n### New render vs resume\n- **cache_mode** `new render` (default) = every queue renders fresh; finished chunks are still checkpointed to disk as you go.\n- Crash / interrupt? Switch to `resume` and queue → continues from the last finished chunk.\n- **chunk_rerender** (needs `resume`): `3` or `2,5` or `4-6` + a new seed → regenerate only those chunks. **rerender_cascade** also redoes everything after (perfect continuity).\n- One **cache_id** per project; if the video/settings changed, resume detects it and safely starts fresh.\n\n### Speed / quality\n- Turbo (default): distill LoRA on, **steps 6, cfg 1**.\n- Max quality: bypass the *Distill LoRA* node (CTRL+B) in ⑤ MODELS, set **steps 40, cfg 5**.\n- **seed**: per-chunk seed = seed + chunk number.\n\n### Sync & color\n- **pad_to_source_length** on: output matches source frame count (audio stays in sync).\n- **color_match** `lab`: cancels color drift between chunks.\n\n### Live progress\nThe node shows `chunk i/N | frames | characters` while working; the console logs the full plan and every prompt. The **report** output (⑦) is the final per-chunk summary.\n\n### Non-human characters (toy bear, robot, creature…)\nIf the output only picks up colors but keeps a human body:\n1. Set the character's **SUBJECT text** (group ③) to what it is — e.g. `pink plush teddy bear` — and confirm the REF MASK preview shows its full silhouette.\n2. Describe it explicitly in **character_prompts**: `1: a fluffy pink plush teddy bear with round ears and stubby arms`.\n3. **Turn off turbo** — cfg 1 barely follows prompts. Bypass the *Distill LoRA* (⑤, CTRL+B) and set **steps 40, cfg 5**.\n4. Loosen the pose so the human body shape isn't forced: **pose_strength ≈ 0.7**, **pose_end ≈ 0.8** (lower further for very different proportions).\n\n### Characters do not resemble the references?\n1. Best-quality mode: bypass the Distill LoRA (5, CTRL+B), **steps 40, cfg 5** - turbo (cfg 1) costs identity fidelity.\n2. Use clean, well-lit, front-facing reference photos; add a *GAP Character Extra View* (back view / close-up) per character.\n3. Check the REF MASK preview - a partial mask means only part of the character reaches the model.\n4. Higher resolution (e.g. 1088x608) gives the model more pixels per face."
+        "### Prompts\n- **base_prompt** — the scene/style; put `{characters}` where character descriptions go.\n- **character_prompts** — one line per character: `1: a man in a red jacket…`. Injected automatically **only in chunks where that character is on screen**.\n- **prompt_schedule** — per-frame-range actions: `0-151: they dance`. Get a pre-filled template from ⑧ FOOTAGE ANALYSIS. Empty ranges fall back to base_prompt. `#` lines are comments.\n\n### Chunking / memory\n- **chunk_length** 81 (trained). Lower → less VRAM. **overlap** 5 = frames carried between chunks.\n- **vae_decode** `tiled` → much lower VRAM during decode.\n\n### Scene cuts\n- **detect_scene_cuts** on: chunk boundaries snap to hard cuts, anchor resets at each cut (no ghosting). **scene_cut_threshold** lower = more sensitive.\n\n### New render vs resume\n- **cache_mode** `new render` (default) = every queue renders fresh; finished chunks are still checkpointed to disk as you go.\n- Crash / interrupt? Switch to `resume` and queue → continues from the last finished chunk.\n- **chunk_rerender** (needs `resume`): `3` or `2,5` or `4-6` + a new seed → regenerate only those chunks. **rerender_cascade** also redoes everything after (perfect continuity).\n- One **cache_id** per project; if the video/settings changed, resume detects it and safely starts fresh.\n\n### Speed / quality\n- Turbo (default): distill LoRA on, **steps 6, cfg 1**.\n- Max quality: bypass the *Distill LoRA* node (CTRL+B) in ⑤ MODELS, set **steps 40, cfg 5**.\n- **seed**: per-chunk seed = seed + chunk number.\n\n### Sync & color\n- **pad_to_source_length** on: output matches source frame count (audio stays in sync).\n- **color_match** `lab`: cancels color drift between chunks.\n\n### Live progress\nThe node shows `chunk i/N | frames | characters` while working; the console logs the full plan and every prompt. The **report** output (⑦) is the final per-chunk summary.\n\n### Non-human characters (toy bear, robot, creature…)\nIf the output only picks up colors but keeps a human body:\n1. Set the character's **SUBJECT text** (group ③) to what it is — e.g. `pink plush teddy bear` — and confirm the REF MASK preview shows its full silhouette.\n2. Describe it explicitly in **character_prompts**: `1: a fluffy pink plush teddy bear with round ears and stubby arms`.\n3. **Turn off turbo** — cfg 1 barely follows prompts. Bypass the *Distill LoRA* (⑤, CTRL+B) and set **steps 40, cfg 5**.\n4. Loosen the pose so the human body shape isn't forced: **pose_strength ≈ 0.7**, **pose_end ≈ 0.8** (lower further for very different proportions).\n\n### Characters do not resemble the references?\n1. Best-quality mode: bypass the Distill LoRA (5, CTRL+B), **steps 40, cfg 5** - turbo (cfg 1) costs identity fidelity.\n2. Use clean, well-lit, front-facing reference photos; add a *GAP Character Extra View* (back view / close-up) per character.\n3. Check the REF MASK preview - a partial mask means only part of the character reaches the model.\n4. Higher resolution (e.g. 1088x608) gives the model more pixels per face.\n\n### character_prompts: every detected character needs a line\nAny detected character WITHOUT a line in character_prompts now gets an automatic\ngeneric fallback description instead of silently getting none (this used to cause\nweak/no resemblance for uncaptioned characters). Still, write a real description\nper character for best resemblance - copy the auto-generated template from ⑧ (CHARACTER PROMPTS TEMPLATE panel).\n\n### character_count input (top-left of this node)\nWired from the reference builder. If the driving video has MORE tracked identities\nthan reference characters you loaded, the report/log will WARN you by name/color -\nthose extra identities have no reference view and will not be replaced. Fix by\nloading more character images, or excluding the extra person via object_indices on\nthe Colored Mask node."
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -1765,7 +1779,7 @@
       "title": "⑧ Footage analysis — phase 1",
       "properties": {},
       "widgets_values": [
-        "### Analyze before you render (automatic)\nThe **PHASE GATE** (top of ⑥) defaults to `auto`:\n\n1. **Run 1** → tracking, MASK CHECK video and this analysis run; generation is skipped. The **NEXT STEP** panel under the gate tells you exactly what to review.\n2. Copy **schedule_template** into **prompt_schedule**, fill in the actions; check masks.\n3. **Run 2** (just press Run again) → rendering starts; analysis is cached.\n\nNew video loaded → the next Run is an analysis pass again, automatically.\nForce behavior anytime: phase `1` = always analyze, `2` = always render."
+        "### Analyze before you render (automatic)\nThe **PHASE GATE** (top of ⑥) defaults to `auto`:\n\n1. **Run 1** → tracking, MASK CHECK video and this analysis run; generation is skipped. The **NEXT STEP** panel under the gate tells you exactly what to review.\n2. Copy **schedule_template** into **prompt_schedule**, fill in the actions; check masks.\n3. Copy **CHARACTER PROMPTS TEMPLATE** (new panel below) into **character_prompts** on the generator, then edit each line to describe what that reference image actually shows. Every detected character needs its own line - one left out gets only a generic fallback description (still works, but a real description resembles the reference much better).\n4. **Run 2** (just press Run again) → rendering starts; analysis is cached.\n\nNew video loaded → the next Run is an analysis pass again, automatically.\nForce behavior anytime: phase `1` = always analyze, `2` = always render."
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -1945,6 +1959,35 @@
       ],
       "outputs": [],
       "title": ">>> NEXT STEP — read this after every Run <<<",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 47,
+      "type": "PreviewAny",
+      "pos": [
+        560,
+        2130
+      ],
+      "size": [
+        500,
+        340
+      ],
+      "flags": {},
+      "order": 56,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 57
+        }
+      ],
+      "outputs": [],
+      "title": "CHARACTER PROMPTS TEMPLATE - copy into character_prompts, then edit",
       "properties": {
         "cnr_id": "comfy-core",
         "Node name for S&R": "PreviewAny"
@@ -2392,6 +2435,22 @@
       46,
       0,
       "STRING"
+    ],
+    [
+      56,
+      15,
+      3,
+      23,
+      10,
+      "INT"
+    ],
+    [
+      57,
+      29,
+      3,
+      47,
+      0,
+      "STRING"
     ]
   ],
   "groups": [
@@ -2485,8 +2544,8 @@
       "bounding": [
         20,
         1660,
-        1550,
-        720
+        2080,
+        850
       ],
       "color": "#b06634",
       "flags": {}

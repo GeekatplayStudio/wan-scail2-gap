@@ -50,6 +50,17 @@ PALETTE = [
     (1.0, 1.0, 0.0),  # 6 yellow
 ]
 PALETTE_NAMES = ["blue", "red", "green", "magenta", "cyan", "yellow"]
+ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth"]
+
+
+def _fallback_description(idx):
+    """Generic per-identity description used when character_prompts has no
+    entry for a detected identity, so that identity is never sent to the model
+    with zero text guidance (silently dropping description hurt resemblance -
+    the model had nothing to reinforce which reference that mask color maps to)."""
+    return (f"The {ORDINALS[idx]} character is the subject from reference image "
+            f"{idx + 1} ({PALETTE_NAMES[idx]}), fully recognizable and closely "
+            f"matching that reference image.")
 
 _ON_THRESH = 225.0 / 255.0  # same threshold nodes_scail uses to read mask colors
 MAX_CHARACTERS = 6
@@ -266,9 +277,10 @@ def _fmt_range(a, b, fps):
 
 def _analyze_timeline(mask_video, presence_threshold, gap_tolerance, min_duration, fps=0.0):
     """Analyze a colored mask video: which characters appear, when they
-    enter/leave, and a fill-in-the-action schedule template.
+    enter/leave, a fill-in-the-action schedule template, and a ready-to-paste
+    character_prompts template (one line per detected identity).
 
-    Returns (timeline_text, schedule_template_text, character_count)."""
+    Returns (timeline_text, schedule_template_text, character_count, character_prompts_template)."""
     total = mask_video.shape[0]
     matrix = _presence_matrix(mask_video, presence_threshold)
     char_intervals = {}
@@ -289,7 +301,23 @@ def _analyze_timeline(mask_video, presence_threshold, gap_tolerance, min_duratio
         lines.append(f"character {c + 1} ({PALETTE_NAMES[c]}): frames {spans}")
     if not char_intervals:
         lines.append("no characters detected - check presence_threshold / SAM3 text prompt")
+    elif n_chars > 1:
+        lines.append("")
+        lines.append(f"If {n_chars} seems too high: check the MASK CHECK video for false-positive "
+                      "tracks (reflections, posters, background people); lower max_objects on "
+                      "SAM3 Video Track or raise its detection_threshold to reduce them.")
     timeline = "\n".join(lines)
+
+    prompts_tpl = [
+        "# Auto-generated character_prompts template - copy this into the generator's",
+        "# character_prompts field, then EDIT each line: replace 'the subject from",
+        "# reference image N' with what that reference actually shows (species,",
+        "# clothing, distinguishing features). Every detected character needs its own",
+        "# line here, or it renders with only a generic fallback description.",
+    ]
+    for c in sorted(char_intervals.keys()):
+        prompts_tpl.append(f"{c + 1}: {_fallback_description(c)}")
+    prompts_template = "\n".join(prompts_tpl) if char_intervals else ""
 
     # smoothed per-frame visible set -> scene segments where the cast changes
     smooth = torch.zeros(total, MAX_CHARACTERS, dtype=torch.bool)
@@ -323,17 +351,36 @@ def _analyze_timeline(mask_video, presence_threshold, gap_tolerance, min_duratio
         tpl.append(f"# frames {_fmt_range(a, b, fps)} | visible: {who}")
         tpl.append(f"{a}-{b}: ")
     template = "\n".join(tpl)
-    return timeline, template, n_chars
+    return timeline, template, n_chars, prompts_template
 
 
-def _compose_prompt(scheduled_prompt, char_prompts, identities):
-    descriptions = [char_prompts[i] for i in identities if i in char_prompts]
+def _compose_prompt(scheduled_prompt, char_prompts, identities, n_refs=None):
+    """Build the final prompt for a chunk. Every detected identity that has an
+    actual reference view (index < n_refs, or n_refs unknown) gets injected
+    text: the user's character_prompts line if written, otherwise an automatic
+    fallback description - an identity is never sent with zero text guidance.
+    Identities with no reference view at all (index >= n_refs) are skipped and
+    returned in `unmatched` so the caller can warn the user.
+
+    Returns (prompt, unmatched_identities)."""
+    descriptions = []
+    unmatched = []
+    for i in identities:
+        no_ref = n_refs is not None and i >= n_refs
+        if no_ref:
+            unmatched.append(i)  # flag regardless of text - the underlying reference image is missing
+        if i in char_prompts:
+            descriptions.append(char_prompts[i])
+        elif not no_ref:
+            descriptions.append(_fallback_description(i))
     joined = " ".join(descriptions)
     if "{characters}" in scheduled_prompt:
-        return scheduled_prompt.replace("{characters}", joined).strip()
-    if joined:
-        return (scheduled_prompt + " " + joined).strip()
-    return scheduled_prompt
+        prompt = scheduled_prompt.replace("{characters}", joined).strip()
+    elif joined:
+        prompt = (scheduled_prompt + " " + joined).strip()
+    else:
+        prompt = scheduled_prompt
+    return prompt, unmatched
 
 
 # D65 white point + sRGB<->XYZ matrices for the pure-torch LAB conversion.
@@ -427,7 +474,7 @@ def _encode(clip, text, cache):
     return cache[text]
 
 
-def _build_chunk_report(chunks, per_chunk_info, total_frames, chunk_length, overlap, cuts=()):
+def _build_chunk_report(chunks, per_chunk_info, total_frames, chunk_length, overlap, cuts=(), unmatched_identities=None, n_refs=None):
     n_shots = (chunks[-1]["shot"] + 1) if chunks else 1
     lines = [
         "GAP SCAIL-2 long video plan",
@@ -436,6 +483,13 @@ def _build_chunk_report(chunks, per_chunk_info, total_frames, chunk_length, over
     ]
     if cuts:
         lines.append(f"scene cuts at frames: {', '.join(str(c) for c in cuts)}")
+    if unmatched_identities:
+        who = ", ".join(f"{i + 1}({PALETTE_NAMES[i]})" for i in sorted(unmatched_identities))
+        lines.append("")
+        lines.append(f"WARNING: identities {who} appear in the driving video but only {n_refs} "
+                      "reference character(s) are loaded - they have no reference view and will "
+                      "NOT be replaced. Load more character images, or exclude them via "
+                      "object_indices on the Colored Mask node.")
     lines.append("")
     for i, (ch, info) in enumerate(zip(chunks, per_chunk_info)):
         ids, prompt = info[0], info[1]
@@ -599,6 +653,7 @@ class GAPSCAIL2LongVideo:
             },
             "optional": {
                 "clip_vision_output": ("CLIP_VISION_OUTPUT",),
+                "character_count": ("INT", {"forceInput": True, "tooltip": "Wire from GAP Multi-Character Reference's character_count output. Lets the node warn when the driving video has more identities than loaded reference characters (they won't be replaced) - especially important if you chained GAP Character Extra View, since that adds reference images without adding characters."}),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -613,8 +668,15 @@ class GAPSCAIL2LongVideo:
                  cache_mode="new render", cache_id="default", chunk_rerender="",
                  rerender_cascade=False, detect_scene_cuts=True, scene_cut_threshold=0.3,
                  vae_decode="standard", pad_to_source_length=True,
-                 clip_vision_output=None, unique_id=None):
+                 clip_vision_output=None, character_count=None, unique_id=None):
         WanSCAILToVideo = _get_scail()
+
+        if character_count is not None:
+            n_refs = character_count
+        elif reference_image.shape[0] == 1:
+            n_refs = 1
+        else:
+            n_refs = reference_image.shape[0] - 1  # composite primary + N views
 
         chunk_length = _four_n_plus_1(chunk_length)
         overlap = _four_n_plus_1(overlap)
@@ -690,6 +752,7 @@ class GAPSCAIL2LongVideo:
         out_segments = []
         seg_shots = []
         per_chunk_info = []
+        all_unmatched = set()
         prev_frames = None
 
         for chunk_index, ch in enumerate(chunks):
@@ -703,7 +766,15 @@ class GAPSCAIL2LongVideo:
             if auto_character_prompts:
                 identities = _detect_identities(pose_video_mask[start:start + length], presence_threshold)
             scheduled = _resolve_schedule(schedule, base_prompt, midpoint)
-            prompt = _compose_prompt(scheduled, char_prompts, identities) if auto_character_prompts else scheduled
+            if auto_character_prompts:
+                prompt, unmatched = _compose_prompt(scheduled, char_prompts, identities, n_refs)
+                if unmatched:
+                    all_unmatched.update(unmatched)
+                    log.warning("chunk %d/%d: identities %s have no reference view (only %d loaded) - "
+                                "they will not be replaced", chunk_index + 1, n_chunks,
+                                [i + 1 for i in unmatched], n_refs)
+            else:
+                prompt = scheduled
 
             if actions[chunk_index] == "load":
                 frames = _load_chunk(cache_path, chunk_index)
@@ -782,7 +853,8 @@ class GAPSCAIL2LongVideo:
             parts.append(seg)
         result = torch.cat(parts, dim=0)
 
-        report = _build_chunk_report(chunks, per_chunk_info, total_frames, chunk_length, overlap, cuts=cuts)
+        report = _build_chunk_report(chunks, per_chunk_info, total_frames, chunk_length, overlap,
+                                      cuts=cuts, unmatched_identities=all_unmatched, n_refs=n_refs)
         if use_cache:
             report = report.replace("\n\n", f"\ncache: '{cache_id}' | reused {n_cached} | generated {n_chunks - n_cached}\n\n", 1)
         _progress_text(f"done: {n_chunks} chunk(s) ({n_cached} cached), {result.shape[0]} frames", unique_id)
@@ -1055,12 +1127,13 @@ class GAPSCAIL2Planner:
             "optional": {
                 "pose_video_mask": ("IMAGE", {"tooltip": "Colored mask video; enables character presence detection."}),
                 "video_frames": ("IMAGE", {"tooltip": "Driving video frames; enables scene-cut detection (and frame count when no mask is wired)."}),
+                "character_count": ("INT", {"forceInput": True, "tooltip": "Wire from GAP Multi-Character Reference to warn about identities with no reference view."}),
             },
         }
 
     def plan(self, chunk_length, overlap, base_prompt, character_prompts, prompt_schedule,
              presence_threshold, detect_scene_cuts=True, scene_cut_threshold=0.3,
-             pose_video_mask=None, video_frames=None):
+             pose_video_mask=None, video_frames=None, character_count=None):
         source = pose_video_mask if pose_video_mask is not None else video_frames
         if source is None:
             raise ValueError("Wire either pose_video_mask or video_frames so the planner knows the frame count")
@@ -1073,15 +1146,19 @@ class GAPSCAIL2Planner:
         char_prompts = _parse_character_prompts(character_prompts)
 
         per_chunk_info = []
+        all_unmatched = set()
         for ch in chunks:
             start, length = ch["start"], ch["length"]
             identities = []
             if pose_video_mask is not None:
                 identities = _detect_identities(pose_video_mask[start:start + length], presence_threshold)
             scheduled = _resolve_schedule(schedule, base_prompt, start + length // 2)
-            per_chunk_info.append((identities, _compose_prompt(scheduled, char_prompts, identities)))
+            prompt, unmatched = _compose_prompt(scheduled, char_prompts, identities, character_count)
+            all_unmatched.update(unmatched)
+            per_chunk_info.append((identities, prompt))
 
-        report = _build_chunk_report(chunks, per_chunk_info, total_frames, chunk_length, overlap, cuts=cuts)
+        report = _build_chunk_report(chunks, per_chunk_info, total_frames, chunk_length, overlap,
+                                      cuts=cuts, unmatched_identities=all_unmatched, n_refs=character_count)
         return (report, len(chunks))
 
 
@@ -1091,8 +1168,8 @@ class GAPCharacterTimeline:
     a marker for every stretch where the visible cast changes."""
 
     CATEGORY = "GAP/SCAIL2"
-    RETURN_TYPES = ("STRING", "STRING", "INT")
-    RETURN_NAMES = ("timeline", "schedule_template", "character_count")
+    RETURN_TYPES = ("STRING", "STRING", "INT", "STRING")
+    RETURN_NAMES = ("timeline", "schedule_template", "character_count", "character_prompts_template")
     FUNCTION = "analyze"
 
     @classmethod
@@ -1111,11 +1188,12 @@ class GAPCharacterTimeline:
         }
 
     def analyze(self, pose_video_mask, presence_threshold, gap_tolerance, min_duration, fps=0.0, unique_id=None):
-        timeline, template, n_chars = _analyze_timeline(
+        timeline, template, n_chars, prompts_template = _analyze_timeline(
             pose_video_mask, presence_threshold, gap_tolerance, min_duration, fps)
         _progress_text(f"{n_chars} character(s) detected", unique_id)
         log.info("timeline:\n%s", timeline)
-        return (timeline, template, n_chars)
+        log.info("character_prompts template:\n%s", prompts_template)
+        return (timeline, template, n_chars, prompts_template)
 
 
 NODE_CLASS_MAPPINGS = {
