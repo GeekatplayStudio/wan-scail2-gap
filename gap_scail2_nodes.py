@@ -674,12 +674,13 @@ class GAPSCAIL2LongVideo:
                  clip_vision_output=None, character_count=None, unique_id=None):
         WanSCAILToVideo = _get_scail()
 
-        if character_count is not None:
+        if character_count is not None and character_count > 0:
             n_refs = character_count
-        elif reference_image.shape[0] == 1:
-            n_refs = 1
         else:
-            n_refs = reference_image.shape[0] - 1  # composite primary + N views
+            # A composite-only reference batch hides the character count, so
+            # without the character_count wire we treat it as unknown:
+            # describe every detected identity, skip unmatched warnings.
+            n_refs = None
 
         chunk_length = _four_n_plus_1(chunk_length)
         overlap = _four_n_plus_1(overlap)
@@ -918,29 +919,51 @@ def _prep_ref(image, mask, width, height, color_idx, bg_value, device):
 
 
 def _composite_primary(chars, width, height, bg_value, device):
-    """Build the SCAIL-2 primary reference: all character cutouts side by side
-    on one canvas, each region colored with its identity color in the mask.
-    The model treats reference_latents[0] as the canonical multi-identity
-    image; per-character images become additional views."""
+    """Build the SCAIL-2 primary reference: all character cutouts arranged on
+    one canvas, each region colored with its identity color in the mask. The
+    model treats reference_latents[0] as the canonical multi-identity image.
+    Layout adapts between 1 and 2 rows to maximize the smallest character."""
     n = len(chars)
-    col_w = width // n
-    canvas = torch.full((1, height, width, 3), bg_value, device=device)
-    canvas_mask = torch.full((1, height, width, 3), bg_value, device=device)
-    for i, (img, m) in enumerate(chars):
+    boxes = []
+    for img, m in chars:
         ys, xs = torch.where(m[0] > 0.5)
         if len(ys) == 0:
+            boxes.append(None)
+        else:
+            boxes.append((ys.min().item(), ys.max().item() + 1, xs.min().item(), xs.max().item() + 1))
+
+    def min_char_area(rows):
+        cols = -(-n // rows)
+        cw, chh = width // cols, height // rows
+        areas = []
+        for b in boxes:
+            if b is None:
+                continue
+            bh, bw = b[1] - b[0], b[3] - b[2]
+            s = min(cw * 0.94 / bw, chh * 0.94 / bh)
+            areas.append((s * bw) * (s * bh))
+        return min(areas) if areas else 0.0
+
+    rows = 1 if (n <= 2 or min_char_area(1) >= min_char_area(2)) else 2
+    cols = -(-n // rows)
+    cell_w, cell_h = width // cols, height // rows
+
+    canvas = torch.full((1, height, width, 3), bg_value, device=device)
+    canvas_mask = torch.full((1, height, width, 3), bg_value, device=device)
+    for i, ((img, m), b) in enumerate(zip(chars, boxes)):
+        if b is None:
             continue
-        y0, y1 = ys.min().item(), ys.max().item() + 1
-        x0, x1 = xs.min().item(), xs.max().item() + 1
+        y0, y1, x0, x1 = b
         crop_img = img[:, y0:y1, x0:x1, :].movedim(-1, 1)
         crop_m = m[:, y0:y1, x0:x1].unsqueeze(1)
         ch, cw = y1 - y0, x1 - x0
-        scale = min(col_w * 0.94 / cw, height * 0.94 / ch)
+        scale = min(cell_w * 0.94 / cw, cell_h * 0.94 / ch)
         nw, nh = max(1, int(cw * scale)), max(1, int(ch * scale))
         crop_img = comfy.utils.common_upscale(crop_img, nw, nh, "bicubic", "disabled").movedim(1, -1)
         crop_m = comfy.utils.common_upscale(crop_m, nw, nh, "nearest-exact", "disabled").squeeze(1)
-        ox = i * col_w + (col_w - nw) // 2
-        oy = (height - nh) // 2
+        r, c = divmod(i, cols)
+        ox = c * cell_w + (cell_w - nw) // 2
+        oy = r * cell_h + (cell_h - nh) // 2
         mm = (crop_m > 0.5).unsqueeze(-1)
         region = canvas[:, oy:oy + nh, ox:ox + nw, :]
         canvas[:, oy:oy + nh, ox:ox + nw, :] = torch.where(mm, crop_img, region)
@@ -951,16 +974,18 @@ def _composite_primary(chars, width, height, bg_value, device):
 
 
 class GAPMultiCharacterReference:
-    """Build the SCAIL-2 multi-identity reference batch from separate character
-    images. With 2+ characters, a composite PRIMARY reference (all character
-    cutouts side by side, identity-colored mask) is built automatically — the
-    model treats reference_latents[0] as the canonical multi-identity image —
-    and the individual images are appended as additional views. Character N
-    gets palette color N; in the driving video, identity colors are assigned by
-    SCAIL2ColoredMask sort order (default left_to_right: character 1 replaces
-    the person appearing first/leftmost). Wire clip_vision_image (the primary)
-    into CLIPVisionEncode — encoding the whole batch would ignore all but the
-    first image."""
+    """Build the SCAIL-2 multi-identity reference from separate character
+    images. With 2+ characters, all cutouts are composited onto ONE primary
+    reference (identity-colored mask) — exactly like the group photo the model
+    expects as reference_latents[0]. By default that single composite is the
+    only reference: the model was trained with a 1-frame reference stack, and
+    stacking one view per character (7 frames for 6 characters) shifts the
+    video's RoPE origin and visibly degrades placement/quality.
+    individual_views=True restores the old batch (composite + one view per
+    character) for experimentation. Character N gets palette color N; in the
+    driving video colors are assigned by SCAIL2ColoredMask sort order (default
+    left_to_right: character 1 replaces the person appearing first/leftmost).
+    Wire clip_vision_image into CLIPVisionEncode."""
 
     CATEGORY = "GAP/SCAIL2"
     RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "INT")
@@ -973,6 +998,7 @@ class GAPMultiCharacterReference:
             "width": ("INT", {"default": 896, "min": 32, "max": 4096, "step": 32}),
             "height": ("INT", {"default": 512, "min": 32, "max": 4096, "step": 32}),
             "replacement_mode": ("BOOLEAN", {"default": True, "tooltip": "Must match the orchestrator/SCAIL2ColoredMask setting. Controls mask background color."}),
+            "individual_views": ("BOOLEAN", {"default": False, "tooltip": "OFF (recommended): only the composite primary is sent - matches the 1-frame reference stack the model was trained with. ON: also append each character image as an additional reference view; large stacks (4+ characters) degrade placement and cause distortion."}),
             "image_1": ("IMAGE",),
         }
         optional = {"mask_1": ("MASK",)}
@@ -981,7 +1007,7 @@ class GAPMultiCharacterReference:
             optional[f"mask_{i}"] = ("MASK",)
         return {"required": required, "optional": optional}
 
-    def build(self, width, height, replacement_mode, image_1, **kwargs):
+    def build(self, width, height, replacement_mode, image_1, individual_views=False, **kwargs):
         device = comfy.model_management.intermediate_device()
         bg_value = 0.0 if replacement_mode else 1.0  # nodes_scail: ref bg black in replacement mode
 
@@ -1000,8 +1026,11 @@ class GAPMultiCharacterReference:
 
         primary, primary_mask = _composite_primary(
             list(zip(images, masks)), width, height, bg_value, device)
-        reference = torch.cat([primary] + images, dim=0)
-        reference_mask = torch.cat([primary_mask] + colored_masks, dim=0)
+        if individual_views:
+            reference = torch.cat([primary] + images, dim=0)
+            reference_mask = torch.cat([primary_mask] + colored_masks, dim=0)
+        else:
+            reference, reference_mask = primary, primary_mask
         return (reference, reference_mask, primary, len(images))
 
 

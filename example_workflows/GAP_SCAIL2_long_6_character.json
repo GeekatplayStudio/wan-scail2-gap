@@ -1247,7 +1247,7 @@
       "title": "③ Characters",
       "properties": {},
       "widgets_values": [
-        "### Character images\nOne clear image per character (portrait OK - images are fit, never cropped). *SAM3 Detect* masks the subject using the **SUBJECT text under each image** - set it to what the image contains: person, toy bear, robot...\n\nWith 2+ characters the builder automatically creates a **composite primary reference** (all characters side by side) - that is what SCAIL-2 uses as the canonical identity image - and keeps each photo as an additional view.\n\n**Check the REF MASK preview** below the builder: first frame = composite with every character in its color, then one color per character. Black/partial = SAM3 missed it -> fix the SUBJECT text.\n\n- Character 1 replaces the first/leftmost person in the video.\n- More characters (max 6): duplicate LoadImage + SUBJECT + Detect, wire to image_3/mask_3.\n- Stronger identity: add *GAP Character Extra View* between builder and generator."
+        "### Character images\nOne clear image per character (portrait OK - images are fit, never cropped). *SAM3 Detect* masks the subject using the **SUBJECT text under each image** - set it to what the image contains: person, toy bear, robot...\n\nWith 2+ characters the builder composites all cutouts onto **one primary reference** (like the group photo the model expects) and sends ONLY that - the model was trained with a single reference frame, and stacking one view per character degrades placement and causes distortion. Keep `individual_views` OFF.\n\n**Check the REF MASK preview** below the builder: the composite must show every character in its color (1=blue, 2=red, ...). Black/partial = SAM3 missed it -> fix the SUBJECT text. **The colors must pair with the same people in the MASK CHECK video** - if not, reorder your images or use object_indices.\n\n- Character 1 replaces the first/leftmost person in the video.\n- More characters (max 6): duplicate LoadImage + SUBJECT + Detect, wire to image_3/mask_3.\n- Stronger identity: add *GAP Character Extra View* between builder and generator."
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -1925,7 +1925,7 @@
           ]
         }
       ],
-      "title": "Build references (auto composite primary)",
+      "title": "Build references (single composite primary)",
       "properties": {
         "aux_id": "GeekatplayStudio/wan-scail2-gap",
         "ver": "74f351334bf7076fa1a4e55946130ae5aed20b1e",
@@ -1934,7 +1934,8 @@
       "widgets_values": [
         896,
         512,
-        true
+        true,
+        false
       ]
     },
     {
