@@ -7,6 +7,6 @@ https://github.com/GeekatplayStudio/wan-scail2-gap
 from .gap_scail2_nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 
 __author__ = "Geekatplay Studio"
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

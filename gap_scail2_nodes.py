@@ -394,13 +394,28 @@ _XYZ2RGB = ((3.240479, -1.537150, -0.498535),
             (-0.969256, 1.875992, 0.041556),
             (0.055648, -0.204043, 1.057311))
 
+# Cached on-device LAB matrices — rebuilt only when device/dtype changes.
+_lab_mats = {}
+
+
+def _lab_matrices(device, dtype):
+    key = (str(device), dtype)
+    mats = _lab_mats.get(key)
+    if mats is None:
+        mats = (
+            torch.tensor(_RGB2XYZ, dtype=dtype, device=device),
+            torch.tensor(_XYZ2RGB, dtype=dtype, device=device),
+            torch.tensor(_LAB_WP, dtype=dtype, device=device).view(1, 3, 1, 1),
+        )
+        _lab_mats[key] = mats
+    return mats
+
 
 def _rgb_to_lab(rgb):
     """(B,3,H,W) sRGB in [0,1] -> CIELAB. Pure torch."""
     lin = torch.where(rgb > 0.04045, ((rgb + 0.055) / 1.055).clamp(min=0.0) ** 2.4, rgb / 12.92)
-    m = torch.tensor(_RGB2XYZ, dtype=lin.dtype, device=lin.device)
-    xyz = torch.einsum("ij,bjhw->bihw", m, lin)
-    xyz = xyz / torch.tensor(_LAB_WP, dtype=lin.dtype, device=lin.device).view(1, 3, 1, 1)
+    m, _, wp = _lab_matrices(lin.device, lin.dtype)
+    xyz = torch.einsum("ij,bjhw->bihw", m, lin) / wp
     f = torch.where(xyz > 0.008856, xyz.clamp(min=1e-8) ** (1.0 / 3.0), 7.787 * xyz + 16.0 / 116.0)
     fx, fy, fz = f[:, 0:1], f[:, 1:2], f[:, 2:3]
     return torch.cat([116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)], dim=1)
@@ -414,8 +429,8 @@ def _lab_to_rgb(lab):
     fz = fy - b / 200.0
     f = torch.cat([fx, fy, fz], dim=1)
     xyz = torch.where(f ** 3 > 0.008856, f ** 3, (f - 16.0 / 116.0) / 7.787)
-    xyz = xyz * torch.tensor(_LAB_WP, dtype=lab.dtype, device=lab.device).view(1, 3, 1, 1)
-    m = torch.tensor(_XYZ2RGB, dtype=lab.dtype, device=lab.device)
+    _, m, wp = _lab_matrices(lab.device, lab.dtype)
+    xyz = xyz * wp
     lin = torch.einsum("ij,bjhw->bihw", m, xyz)
     return torch.where(lin > 0.0031308, 1.055 * lin.clamp(min=0.0) ** (1.0 / 2.4) - 0.055, 12.92 * lin)
 
@@ -518,12 +533,89 @@ def _cache_dir(cache_id):
     return d
 
 
-def _fingerprint(total_frames, width, height, chunk_length, overlap, replacement_mode, cuts=()):
+def _mask_fingerprint(mask_video):
+    """Cheap stable hash of a colored mask video (shape + sampled frame means).
+    Used so resume/cache invalidates when identity colors / object_indices change."""
+    if mask_video is None:
+        return "nomask"
+    t = int(mask_video.shape[0])
+    idxs = sorted({0, max(0, t // 2), max(0, t - 1)})
+    h = hashlib.sha1()
+    h.update(str(tuple(mask_video.shape)).encode())
+    for i in idxs:
+        frame = mask_video[i, ..., :3].float().mean(dim=(0, 1))
+        h.update(frame.detach().cpu().numpy().tobytes())
+    # coarse spatial sample of the middle frame catches remaps with similar means
+    mid = mask_video[idxs[len(idxs) // 2], ..., :3].movedim(-1, 0).float().unsqueeze(0)
+    small = F.interpolate(mid, size=(8, 8), mode="area")
+    h.update(small.detach().cpu().numpy().tobytes())
+    return h.hexdigest()[:16]
+
+
+def _fingerprint(total_frames, width, height, chunk_length, overlap, replacement_mode, cuts=(),
+                 mask_fp=""):
     """Structural settings that make cached chunks (in)compatible. Prompts and
-    seeds are deliberately excluded so single chunks can be re-rendered."""
+    seeds are deliberately excluded so single chunks can be re-rendered.
+    Mask fingerprint is included so editing object_indices / frozen masks
+    cannot silently reuse chunks from a different identity map."""
     key = f"{total_frames}|{width}|{height}|{chunk_length}|{overlap}|{replacement_mode}"
     key += "|cuts:" + ",".join(str(c) for c in cuts)
+    key += "|mask:" + (mask_fp or "nomask")
     return hashlib.sha1(key.encode()).hexdigest()[:16]
+
+
+def _video_content_key(frames):
+    """Stable-enough key to notice a different driving video between queues.
+    Stronger than shape+endpoint means alone (false 'same video' collisions)."""
+    t = int(frames.shape[0])
+    idxs = sorted({0, max(0, t // 2), max(0, t - 1)})
+    parts = [str(tuple(frames.shape))]
+    for i in idxs:
+        parts.append(f"{float(frames[i].float().mean()):.6f}")
+    small = F.interpolate(
+        frames[0:1, ..., :3].movedim(-1, 1).float(), size=(8, 8), mode="area")
+    parts.append(hashlib.sha1(small.detach().cpu().numpy().tobytes()).hexdigest()[:12])
+    return "|".join(parts)
+
+
+def _phase_state_paths():
+    d = _cache_dir("_phase_state")
+    return (os.path.join(d, "state.json"), os.path.join(d, "pose_mask.pt"))
+
+
+def _load_phase_state():
+    state_path, _ = _phase_state_paths()
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_phase_state(state):
+    state_path, _ = _phase_state_paths()
+    tmp = state_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(tmp, state_path)
+
+
+def _save_frozen_mask(mask):
+    _, mask_path = _phase_state_paths()
+    tmp = mask_path + ".tmp"
+    torch.save(mask.detach().half().contiguous().cpu(), tmp)
+    os.replace(tmp, mask_path)
+
+
+def _load_frozen_mask():
+    _, mask_path = _phase_state_paths()
+    if not os.path.exists(mask_path):
+        return None
+    try:
+        return torch.load(mask_path, map_location="cpu", weights_only=True).float()
+    except Exception as e:
+        log.warning("unreadable frozen pose mask (%s) - ignoring", e)
+        return None
 
 
 def _chunk_file(cache_dir, index):
@@ -704,13 +796,14 @@ class GAPSCAIL2LongVideo:
         done = set()
         if use_cache:
             cache_path = _cache_dir(cache_id)
+            mask_fp = _mask_fingerprint(pose_video_mask)
             fp = _fingerprint(total_frames, width, height, chunk_length, overlap, replacement_mode,
-                              cuts=cuts)
+                              cuts=cuts, mask_fp=mask_fp)
             manifest = _load_manifest(cache_path)
             stale = manifest is not None and manifest.get("fingerprint") != fp
             if cache_mode == "new render" or stale:
                 if stale and cache_mode == "resume":
-                    log.warning("cache '%s' belongs to a different job (video/settings changed) - "
+                    log.warning("cache '%s' belongs to a different job (video/settings/mask changed) - "
                                 "starting a new render instead of resuming", cache_id)
                 _clear_cache(cache_path)
                 manifest = None
@@ -738,9 +831,12 @@ class GAPSCAIL2LongVideo:
         negative_cond = None  # encoded lazily, only if something actually generates
 
         # ---- multi-character practical advisories (before any GPU time is spent) ----
+        # Compute presence once and reuse per-chunk (was scanned twice before).
         advisories = []
+        presence = None
         if auto_character_prompts:
-            video_ids = torch.where(_presence_matrix(pose_video_mask, presence_threshold).any(dim=0))[0].tolist()
+            presence = _presence_matrix(pose_video_mask, presence_threshold)
+            video_ids = torch.where(presence.any(dim=0))[0].tolist()
             n_ids = len(video_ids)
             if n_ids >= 3 and cfg <= 2.0:
                 advisories.append(
@@ -787,7 +883,9 @@ class GAPSCAIL2LongVideo:
             midpoint = start + length // 2
             identities = []
             if auto_character_prompts:
-                identities = _detect_identities(pose_video_mask[start:start + length], presence_threshold)
+                # Reuse the full-video presence matrix (peak-per-chunk via any()).
+                chunk_pres = presence[start:start + length].any(dim=0)
+                identities = torch.where(chunk_pres)[0].tolist()
             scheduled = _resolve_schedule(schedule, base_prompt, midpoint)
             if auto_character_prompts:
                 prompt, unmatched = _compose_prompt(scheduled, char_prompts, identities, n_refs)
@@ -1075,7 +1173,7 @@ def _phase_decision(phase, key, stored_key):
     """Returns (pass_through, key_to_store). 'auto' blocks the first time it
     sees a video (analysis pass) and passes on every following queue."""
     if phase.startswith("2"):
-        return True, stored_key
+        return True, stored_key if stored_key is not None else key
     if phase.startswith("1"):
         return False, key
     # auto
@@ -1091,11 +1189,17 @@ class GAPPhaseGate:
     mask check, footage analysis) and skips generation; every following Run
     renders. Manual '1' / '2' force either behavior. The `next_step` STRING
     output tells the user what just happened and what to do next — wire it to
-    a Preview Any node."""
+    a Preview Any node.
+
+    Wire `pose_video_mask` (from SCAIL2ColoredMask) into this node and use the
+    `pose_video_mask` OUTPUT for Long Video / Timeline / Mask Check. On the
+    analysis pass the mask is frozen to disk; on generate the frozen mask is
+    reused so SAM3 re-tracking cannot reshuffle identity colors (and with
+    ComfyUI lazy inputs, tracking itself can be skipped on Run 2)."""
 
     CATEGORY = "GAP/SCAIL2"
-    RETURN_TYPES = ("IMAGE", "STRING")
-    RETURN_NAMES = ("frames", "next_step")
+    RETURN_TYPES = ("IMAGE", "STRING", "IMAGE")
+    RETURN_NAMES = ("frames", "next_step", "pose_video_mask")
     FUNCTION = "gate"
 
     @classmethod
@@ -1105,53 +1209,103 @@ class GAPPhaseGate:
                 "frames": ("IMAGE",),
                 "phase": (["auto (Run 1 analyzes, Run 2 renders)", "1 - analyze only", "2 - generate video"],
                           {"default": "auto (Run 1 analyzes, Run 2 renders)",
-                           "tooltip": "auto: the first Run on a new video does analysis only (generation skipped); just press Run again to render. '1' always analyzes, '2' always renders."}),
+                           "tooltip": "auto: the first Run on a new video does analysis only (generation skipped); just press Run again to render. '1' always analyzes (and refreshes the frozen mask), '2' always renders using the frozen mask when available."}),
+            },
+            "optional": {
+                "pose_video_mask": ("IMAGE", {
+                    "lazy": True,
+                    "tooltip": "Wire from SCAIL2ColoredMask, then use THIS node's pose_video_mask output for Long Video / Timeline / Mask Check. Freezes the reviewed mask between analyze and generate so identity colors cannot reshuffle.",
+                }),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
     @classmethod
-    def IS_CHANGED(cls, frames, phase, unique_id=None):
+    def IS_CHANGED(cls, frames, phase, pose_video_mask=None, unique_id=None):
         return float("nan")  # must re-evaluate every queue, or 'Run again' would hit the cache and do nothing
 
-    def gate(self, frames, phase, unique_id=None):
-        # cheap content key: shape + first/last frame means — enough to notice a new video
-        key = "{}|{:.6f}|{:.6f}".format(
-            tuple(frames.shape), float(frames[0].float().mean()), float(frames[-1].float().mean()))
-        state_path = os.path.join(_cache_dir("_phase_state"), "state.json")
-        stored_key = None
-        try:
-            with open(state_path, "r", encoding="utf-8") as f:
-                stored_key = json.load(f).get("analyzed_key")
-        except Exception:
-            pass
+    def check_lazy_status(self, frames, phase, pose_video_mask=None, unique_id=None):
+        """Skip re-running SAM3/ColoredMask on generate when a frozen mask exists."""
+        key = _video_content_key(frames)
+        state = _load_phase_state()
+        pass_through, _ = _phase_decision(phase, key, state.get("analyzed_key"))
+        frozen = _load_frozen_mask()
+        if pass_through and frozen is not None and state.get("analyzed_key") == key:
+            return []
+        return ["pose_video_mask"]
 
+    def gate(self, frames, phase, pose_video_mask=None, unique_id=None):
+        key = _video_content_key(frames)
+        state = _load_phase_state()
+        stored_key = state.get("analyzed_key")
         pass_through, store = _phase_decision(phase, key, stored_key)
-        if store != stored_key:
-            with open(state_path, "w", encoding="utf-8") as f:
-                json.dump({"analyzed_key": store}, f)
+
+        frozen = _load_frozen_mask()
+        out_mask = pose_video_mask
+        if pass_through:
+            # Prefer the mask reviewed during analysis — SAM3 often reshuffles
+            # object IDs when it re-tracks on the generate queue.
+            if frozen is not None and (store == key or stored_key == key
+                                       or phase.startswith("2")):
+                if (frozen.shape[0] == frames.shape[0]
+                        and frozen.shape[1] == frames.shape[1]
+                        and frozen.shape[2] == frames.shape[2]):
+                    out_mask = frozen
+                    log.info("phase gate: using frozen pose mask (%d frames)", frozen.shape[0])
+                else:
+                    log.warning("frozen pose mask shape %s incompatible with frames %s - using live mask",
+                                tuple(frozen.shape), tuple(frames.shape))
+            if out_mask is None:
+                out_mask = torch.zeros((frames.shape[0], frames.shape[1], frames.shape[2], 3),
+                                       dtype=torch.float32)
+                log.warning("phase gate: no pose_video_mask wired and no freeze on disk - "
+                            "generator will see an empty mask")
+        else:
+            # Analysis pass: persist whatever mask the user is reviewing.
+            if pose_video_mask is not None:
+                _save_frozen_mask(pose_video_mask)
+                state["mask_fp"] = _mask_fingerprint(pose_video_mask)
+                out_mask = pose_video_mask
+                log.info("phase gate: froze pose mask (%d frames) for generate pass",
+                         pose_video_mask.shape[0])
+            elif frozen is not None:
+                out_mask = frozen
+            else:
+                out_mask = torch.zeros((frames.shape[0], frames.shape[1], frames.shape[2], 3),
+                                       dtype=torch.float32)
+                log.warning("phase gate: pose_video_mask not wired - MASK CHECK / generator "
+                            "cannot see identity colors. Wire SCAIL2ColoredMask into this node.")
+
+        if store != stored_key or state.get("analyzed_key") != store:
+            state["analyzed_key"] = store
+            _save_phase_state(state)
 
         if pass_through:
             msg = ("PHASE 2 — RENDERING\n\n"
                    "Generation is running — watch the progress text on the generator node\n"
-                   "and the console for the chunk plan. The finished video lands in OUTPUT.")
-            _progress_text("PHASE 2: rendering", unique_id)
+                   "and the console for the chunk plan. The finished video lands in OUTPUT.\n\n"
+                   "Using the FROZEN pose mask from the analysis pass (identity colors locked).\n"
+                   "Changed object_indices / re-tracked? Set phase to '1 - analyze only' once\n"
+                   "to refresh the freeze, then generate again.")
+            _progress_text("PHASE 2: rendering (mask frozen)", unique_id)
             log.info("phase gate: rendering pass")
-            return (frames, msg)
+            return (frames, msg, out_mask)
 
         from comfy_execution.graph_utils import ExecutionBlocker
-        again = ("Press Run again — rendering starts automatically."
+        again = ("Press Run again — rendering starts automatically with this mask frozen."
                  if phase.startswith("auto") else
                  "Set phase to '2 - generate video' (or 'auto') and press Run.")
         msg = ("PHASE 1 COMPLETE — ANALYSIS ONLY (generation was skipped on purpose)\n\n"
+               "Pose mask is now FROZEN for the next generate pass.\n\n"
                "Review, then continue:\n"
                "  1. MASK CHECK video (group 4): is each person the right color?\n"
                "  2. REF MASK preview (group 3): full colored silhouette per character?\n"
                "  3. FOOTAGE ANALYSIS (group 8): copy schedule_template into prompt_schedule, fill actions.\n"
-               "  4. " + again)
-        _progress_text("PHASE 1 done — press Run again to render", unique_id)
-        log.info("phase gate: analysis pass complete - next queue will render")
-        return (ExecutionBlocker(None), msg)
+               "  4. Wrong colors? Fix object_indices, set phase to '1', Run again to re-freeze.\n"
+               "  5. " + again)
+        _progress_text("PHASE 1 done — mask frozen; press Run again to render", unique_id)
+        log.info("phase gate: analysis pass complete - next queue will render with frozen mask")
+        return (ExecutionBlocker(None), msg, out_mask)
 
 
 class GAPSCAIL2Planner:

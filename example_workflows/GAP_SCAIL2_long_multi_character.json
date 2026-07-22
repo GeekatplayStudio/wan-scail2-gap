@@ -2,7 +2,7 @@
   "id": "a7c1f2d3-4b5e-4f6a-8b9c-0d1e2f3a4b5c",
   "revision": 0,
   "last_node_id": 47,
-  "last_link_id": 57,
+  "last_link_id": 61,
   "nodes": [
     {
       "id": 1,
@@ -336,9 +336,7 @@
           "name": "pose_video_mask",
           "type": "IMAGE",
           "links": [
-            15,
-            36,
-            41
+            58
           ]
         },
         {
@@ -1106,7 +1104,7 @@
         {
           "name": "pose_video_mask",
           "type": "IMAGE",
-          "link": 15
+          "link": 59
         },
         {
           "name": "reference_image",
@@ -1354,7 +1352,7 @@
         {
           "name": "pose_video_mask",
           "type": "IMAGE",
-          "link": 36
+          "link": 60
         },
         {
           "name": "fps",
@@ -1499,7 +1497,7 @@
         {
           "name": "image2",
           "type": "IMAGE",
-          "link": 41
+          "link": 61
         }
       ],
       "outputs": [
@@ -1780,7 +1778,7 @@
       "title": "⑧ Footage analysis — phase 1",
       "properties": {},
       "widgets_values": [
-        "### Analyze before you render (automatic)\nThe **PHASE GATE** (top of ⑥) defaults to `auto`:\n\n1. **Run 1** → tracking, MASK CHECK video and this analysis run; generation is skipped. The **NEXT STEP** panel under the gate tells you exactly what to review.\n2. Copy **schedule_template** into **prompt_schedule**, fill in the actions; check masks.\n3. Copy **CHARACTER PROMPTS TEMPLATE** (new panel below) into **character_prompts** on the generator, then edit each line to describe what that reference image actually shows. Every detected character needs its own line - one left out gets only a generic fallback description (still works, but a real description resembles the reference much better).\n4. **Run 2** (just press Run again) → rendering starts; analysis is cached.\n\nNew video loaded → the next Run is an analysis pass again, automatically.\nForce behavior anytime: phase `1` = always analyze, `2` = always render."
+        "### Analyze before you render (automatic)\nThe **PHASE GATE** (top of ⑥) defaults to `auto`:\n\n1. **Run 1** → tracking, MASK CHECK and analysis run; generation is skipped. The pose mask is **FROZEN** so Run 2 cannot reshuffle identity colors. The **NEXT STEP** panel under the gate tells you what to review.\n2. Copy **schedule_template** into **prompt_schedule**, fill in the actions; check masks.\n3. Copy **CHARACTER PROMPTS TEMPLATE** into **character_prompts** on the generator, then edit each line.\n4. **Run 2** (press Run again) → rendering with the frozen mask; SAM3 tracking can be skipped.\n\nChanged `object_indices` / re-tracked? Set phase to `1 - analyze only`, Run once to refresh the freeze, then generate.\nNew video loaded → next Run is analysis again.\nForce anytime: phase `1` = analyze+freeze, `2` = render with freeze."
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -1794,7 +1792,7 @@
       ],
       "size": [
         520,
-        110
+        160
       ],
       "flags": {},
       "order": 50,
@@ -1804,6 +1802,12 @@
           "name": "frames",
           "type": "IMAGE",
           "link": 51
+        },
+        {
+          "name": "pose_video_mask",
+          "type": "IMAGE",
+          "link": 58,
+          "shape": 7
         }
       ],
       "outputs": [
@@ -1820,9 +1824,18 @@
           "links": [
             55
           ]
+        },
+        {
+          "name": "pose_video_mask",
+          "type": "IMAGE",
+          "links": [
+            59,
+            60,
+            61
+          ]
         }
       ],
-      "title": "PHASE GATE — Run 1: analyze | Run 2: render (auto)",
+      "title": "PHASE GATE — freeze mask on analyze, render on Run 2",
       "properties": {
         "Node name for S&R": "GAPPhaseGate"
       },
@@ -2110,14 +2123,6 @@
       "SAM3_TRACK_DATA"
     ],
     [
-      15,
-      9,
-      0,
-      23,
-      4,
-      "IMAGE"
-    ],
-    [
       16,
       10,
       0,
@@ -2278,14 +2283,6 @@
       "VIDEO"
     ],
     [
-      36,
-      9,
-      0,
-      29,
-      0,
-      "IMAGE"
-    ],
-    [
       37,
       29,
       0,
@@ -2315,14 +2312,6 @@
       0,
       32,
       0,
-      "IMAGE"
-    ],
-    [
-      41,
-      9,
-      0,
-      32,
-      1,
       "IMAGE"
     ],
     [
@@ -2452,6 +2441,38 @@
       47,
       0,
       "STRING"
+    ],
+    [
+      58,
+      9,
+      0,
+      42,
+      1,
+      "IMAGE"
+    ],
+    [
+      59,
+      42,
+      2,
+      23,
+      4,
+      "IMAGE"
+    ],
+    [
+      60,
+      42,
+      2,
+      29,
+      0,
+      "IMAGE"
+    ],
+    [
+      61,
+      42,
+      2,
+      32,
+      1,
+      "IMAGE"
     ]
   ],
   "groups": [
