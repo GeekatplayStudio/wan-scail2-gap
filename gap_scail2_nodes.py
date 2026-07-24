@@ -1049,10 +1049,11 @@ def _letterbox(img_bchw, width, height, bg_value, method="bicubic"):
 def _fit_colored_mask(img, target, bg_value=0.0):
     """Fit a painted/held colored mask to target BHWC size.
 
-    Same letterbox policy as GAP Multi-Character Reference — never stretch and
-    never permute H↔W (permute is a 90° rotate and lays the character on its
-    side). If the painted clip is a different aspect than MultiChar, letterbox
-    into the upstream canvas; user should reset+repaint if the aspect was wrong.
+    Same aspect → WanSCAIL-style center resize (fills the frame, no stretch
+    squash). Different aspect (e.g. old 896×512 clipspace vs 512×896 MultiChar)
+    → return None so the caller falls back to upstream; letterboxing the whole
+    foreign canvas would leave a useless tiny blob in the middle.
+    Never permute H↔W (that is a 90° rotate).
     """
     if img is None:
         return target
@@ -1063,20 +1064,23 @@ def _fit_colored_mask(img, target, bg_value=0.0):
     if (h, w) == (th, tw):
         return out
 
-    if (h, w) == (tw, th):
+    src_aspect = w / max(h, 1)
+    tgt_aspect = tw / max(th, 1)
+    if abs(src_aspect - tgt_aspect) > 0.05:
         log.warning(
-            "GAPRefMaskPaint: painted mask is %d×%d but upstream is %d×%d (H×W) — "
-            "letterboxing without rotate. Toggle reset paint and re-paint on the "
-            "current MultiChar aspect (check WIDTH/HEIGHT).",
+            "GAPRefMaskPaint: painted %d×%d aspect != upstream %d×%d — "
+            "ignoring paint (letterbox would make a tiny blob). "
+            "Toggle reset paint, then re-paint on the current REF mask.",
             h, w, th, tw,
         )
-    else:
-        log.info(
-            "GAPRefMaskPaint: letterboxing painted mask %d×%d → %d×%d (H×W)",
-            h, w, th, tw,
-        )
-    return _letterbox(
-        out.movedim(-1, 1), tw, th, bg_value, "nearest-exact"
+        return None
+
+    log.info(
+        "GAPRefMaskPaint: center-resizing painted mask %d×%d → %d×%d (H×W)",
+        h, w, th, tw,
+    )
+    return comfy.utils.common_upscale(
+        out.movedim(-1, 1), tw, th, "nearest-exact", "center"
     ).movedim(1, -1)
 
 
@@ -1632,12 +1636,17 @@ class GAPRefMaskPaint:
                 log.info("GAPRefMaskPaint: automatic upstream mask %s", tuple(out.shape))
                 _progress_text("REF MASK: automatic — paint on THIS node", unique_id)
 
-        # Same geometry policy as MultiChar (_letterbox) — never stretch.
-        # Stretch ("disabled") was crushing letterboxed refs when H/W differed
-        # (Mask Editor / wrong-orientation temps → skinny silhouette).
+        # Fit to MultiChar canvas. Wrong aspect (old landscape clipspace vs
+        # portrait upstream) → ignore paint; letterbox would make a tiny blob.
         fitted = _fit_colored_mask(out[:1], reference_image_mask[:1], bg_value)
-        n = reference_image_mask.shape[0]
-        out = fitted.repeat(n, 1, 1, 1) if n > 1 else fitted
+        if fitted is None:
+            out = reference_image_mask
+            state["ref_mask_painted"] = False
+            _save_phase_state(state)
+            _progress_text("REF MASK: automatic (paint aspect mismatch — re-paint)", unique_id)
+        else:
+            n = reference_image_mask.shape[0]
+            out = fitted.repeat(n, 1, 1, 1) if n > 1 else fitted
         _save_ref_paint(out)
 
         ui_images = None
