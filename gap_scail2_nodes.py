@@ -1302,6 +1302,12 @@ class GAPPhaseGate:
                     {"default": "use live mask (keeps paint edits)",
                      "tooltip": "LIVE (default): Run 2 uses the mask currently on the wire — including anything you painted after analyze — and updates the freeze. FROZEN: Run 2 skips SAM3 and reuses the analyze-time freeze (your post-analyze painting is IGNORED)."},
                 ),
+                "reanalyze": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "force re-analyze this Run",
+                    "label_off": "use cached analyze (auto)",
+                    "tooltip": "ON for one Run: clear the analyze cache and stop after analysis (no generate). Use when auto jumps straight to generate because this video was already analyzed.",
+                }),
             },
             "optional": {
                 "pose_video_mask": ("IMAGE", {
@@ -1314,15 +1320,18 @@ class GAPPhaseGate:
 
     @classmethod
     def IS_CHANGED(cls, frames, phase, on_generate="use live mask (keeps paint edits)",
-                   pose_video_mask=None, unique_id=None):
+                   reanalyze=False, pose_video_mask=None, unique_id=None):
         return float("nan")
 
     def check_lazy_status(self, frames, phase, on_generate="use live mask (keeps paint edits)",
-                          pose_video_mask=None, unique_id=None):
+                          reanalyze=False, pose_video_mask=None, unique_id=None):
         """Only skip the mask wire when user explicitly wants the analyze-time freeze."""
         key = _video_content_key(frames)
         state = _load_phase_state()
-        pass_through, _ = _phase_decision(phase, key, state.get("analyzed_key"))
+        if reanalyze:
+            pass_through = False
+        else:
+            pass_through, _ = _phase_decision(phase, key, state.get("analyzed_key"))
         frozen = _load_frozen_mask()
         frozen_ok = (
             frozen is not None
@@ -1337,13 +1346,19 @@ class GAPPhaseGate:
         return ["pose_video_mask"]
 
     def gate(self, frames, phase, on_generate="use live mask (keeps paint edits)",
-             pose_video_mask=None, unique_id=None):
+             reanalyze=False, pose_video_mask=None, unique_id=None):
         from comfy_execution.graph_utils import ExecutionBlocker
 
         key = _video_content_key(frames)
         state = _load_phase_state()
-        stored_key = state.get("analyzed_key")
-        pass_through, store = _phase_decision(phase, key, stored_key)
+        if reanalyze:
+            state.pop("analyzed_key", None)
+            stored_key = None
+            pass_through, store = False, key
+            log.info("phase gate: reanalyze=ON — clearing analyze cache, analysis only this Run")
+        else:
+            stored_key = state.get("analyzed_key")
+            pass_through, store = _phase_decision(phase, key, stored_key)
         use_frozen = on_generate.startswith("use frozen")
 
         frozen = _load_frozen_mask()
@@ -1594,50 +1609,75 @@ class GAPRefMaskPaint:
     @classmethod
     def IS_CHANGED(cls, reference_image_mask, reset=False, image="", unique_id=None,
                    prompt=None, extra_pnginfo=None):
+        # MUST include upstream fingerprint — otherwise ComfyUI caches this node and
+        # fresh SAM3_Detect → MultiChar masks never reach Long Video.
+        try:
+            finger = hashlib.sha1(
+                (reference_image_mask[:1, ::16, ::16, :3].detach().float().cpu()
+                 .numpy().tobytes())
+            ).hexdigest()[:12]
+        except Exception:
+            finger = "x"
         paint = _ref_paint_path()
         mtime = os.path.getmtime(paint) if os.path.exists(paint) else 0
-        return f"{reset}|{image}|{mtime}"
+        return f"{reset}|{image}|{mtime}|{finger}"
 
     def hold(self, reference_image_mask, reset=False, image="", unique_id=None,
              prompt=None, extra_pnginfo=None):
         state = _load_phase_state()
         painted_flag = bool(state.get("ref_mask_painted"))
-        # Colored-mask background is uniform in corners (MultiChar letterbox pad)
+        last_path = str(state.get("ref_mask_image_path") or "")
+        image = str(image or "").strip()
         bg_value = float(reference_image_mask[0, 0, 0, :3].mean().item())
+        out = None
 
         if reset:
             state["ref_mask_painted"] = False
+            state["ref_mask_image_path"] = ""
             _save_phase_state(state)
             out = reference_image_mask
             log.info("GAPRefMaskPaint: RESET — using fresh upstream mask %s", tuple(out.shape))
             _progress_text("REF MASK: reset to automatic", unique_id)
         else:
-            painted = _load_image_path(image)
-            if painted is not None:
-                out = painted
-                state["ref_mask_painted"] = True
-                _save_phase_state(state)
-                log.info("GAPRefMaskPaint: loaded Mask Editor image %s", tuple(out.shape))
-                _progress_text("REF MASK: from Mask Editor", unique_id)
-            elif painted_flag:
+            # Only adopt Mask Editor output when the widget path is NEW.
+            # A sticky clipspace path must NOT override MultiChar every Run.
+            if image and image != last_path:
+                painted = _load_image_path(image)
+                if painted is not None:
+                    trial = _fit_colored_mask(painted[:1], reference_image_mask[:1], bg_value)
+                    state["ref_mask_image_path"] = image
+                    if trial is None:
+                        state["ref_mask_painted"] = False
+                        _save_phase_state(state)
+                        out = reference_image_mask
+                        _progress_text(
+                            "REF MASK: automatic (paint aspect mismatch — re-paint)",
+                            unique_id,
+                        )
+                    else:
+                        state["ref_mask_painted"] = True
+                        _save_phase_state(state)
+                        out = painted
+                        log.info("GAPRefMaskPaint: loaded NEW Mask Editor image %s",
+                                 tuple(out.shape))
+                        _progress_text("REF MASK: from Mask Editor", unique_id)
+
+            if out is None and painted_flag:
                 held = _load_ref_paint()
                 if held is not None:
                     out = held
                     log.info("GAPRefMaskPaint: keeping painted mask %s", tuple(out.shape))
                     _progress_text("REF MASK: kept your paint", unique_id)
                 else:
-                    out = reference_image_mask
                     state["ref_mask_painted"] = False
                     _save_phase_state(state)
                     log.warning("GAPRefMaskPaint: paint file missing — fell back to upstream")
-                    _progress_text("REF MASK: automatic (paint file missing)", unique_id)
-            else:
+
+            if out is None:
                 out = reference_image_mask
                 log.info("GAPRefMaskPaint: automatic upstream mask %s", tuple(out.shape))
                 _progress_text("REF MASK: automatic — paint on THIS node", unique_id)
 
-        # Fit to MultiChar canvas. Wrong aspect (old landscape clipspace vs
-        # portrait upstream) → ignore paint; letterbox would make a tiny blob.
         fitted = _fit_colored_mask(out[:1], reference_image_mask[:1], bg_value)
         if fitted is None:
             out = reference_image_mask
