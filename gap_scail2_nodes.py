@@ -1208,19 +1208,18 @@ def _phase_decision(phase, key, stored_key):
 class GAPPhaseGate:
     """Two-phase execution without muting nodes.
 
-    auto (default): the first Run on a video executes only analysis (tracking,
-    mask check, footage analysis) and skips generation; every following Run
-    renders. Manual '1' / '2' force either behavior. The `next_step` STRING
-    output tells the user what just happened and what to do next — wire it to
-    a Preview Any node.
+    auto (default): Run 1 analyzes (tracking + MASK CHECK); Run 2 renders.
 
-    Wire `pose_video_mask` (from SCAIL2ColoredMask) into this node:
-      - `pose_video_mask` OUT → Long Video (always the frozen tensor on Run 2)
-      - `mask_check` OUT → Timeline / ImageBlend / Save MASK CHECK
-        (ExecutionBlocker on generate — those nodes do not re-run on Run 2)
+    Wire SCAIL2ColoredMask → (optional MaskEditor / paint node) → this node's
+    pose_video_mask input. Then:
+      - pose_video_mask OUT → Long Video
+      - mask_check OUT → Timeline / MASK CHECK preview (blocked when using freeze)
 
-    On analysis the mask is frozen to disk; on generate SAM3 is skipped via
-    lazy inputs and MASK CHECK is not rewritten."""
+    on_generate:
+      - "use live mask" (default): Run 2 pulls the current mask wire so YOUR
+        paint edits after analyze are kept, and the freeze file is updated.
+      - "use frozen mask": Run 2 skips SAM3 and reuses the analyze-time freeze
+        (faster, but discards any painting done after Run 1)."""
 
     CATEGORY = "GAP/SCAIL2"
     RETURN_TYPES = ("IMAGE", "STRING", "IMAGE", "IMAGE")
@@ -1234,23 +1233,30 @@ class GAPPhaseGate:
                 "frames": ("IMAGE",),
                 "phase": (["auto (Run 1 analyzes, Run 2 renders)", "1 - analyze only", "2 - generate video"],
                           {"default": "auto (Run 1 analyzes, Run 2 renders)",
-                           "tooltip": "auto: the first Run on a new video does analysis only (generation skipped); just press Run again to render. '1' always analyzes (and refreshes the frozen mask), '2' always renders using the frozen mask when available."}),
+                           "tooltip": "auto: Run 1 analyzes only; Run 2 renders. '1' always analyzes, '2' always renders."}),
+                "on_generate": (
+                    ["use live mask (keeps paint edits)", "use frozen mask (skip SAM3)"],
+                    {"default": "use live mask (keeps paint edits)",
+                     "tooltip": "LIVE (default): Run 2 uses the mask currently on the wire — including anything you painted after analyze — and updates the freeze. FROZEN: Run 2 skips SAM3 and reuses the analyze-time freeze (your post-analyze painting is IGNORED)."},
+                ),
             },
             "optional": {
                 "pose_video_mask": ("IMAGE", {
                     "lazy": True,
-                    "tooltip": "Wire from SCAIL2ColoredMask. Use pose_video_mask OUT for Long Video; use mask_check OUT for Timeline / MASK CHECK preview (blocked on generate).",
+                    "tooltip": "From SCAIL2ColoredMask, ideally through a MaskEditor if you paint. pose_video_mask OUT → Long Video; mask_check OUT → Timeline / MASK CHECK.",
                 }),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
     @classmethod
-    def IS_CHANGED(cls, frames, phase, pose_video_mask=None, unique_id=None):
-        return float("nan")  # must re-evaluate every queue, or 'Run again' would hit the cache and do nothing
+    def IS_CHANGED(cls, frames, phase, on_generate="use live mask (keeps paint edits)",
+                   pose_video_mask=None, unique_id=None):
+        return float("nan")
 
-    def check_lazy_status(self, frames, phase, pose_video_mask=None, unique_id=None):
-        """Skip re-running SAM3/ColoredMask on generate when a frozen mask exists."""
+    def check_lazy_status(self, frames, phase, on_generate="use live mask (keeps paint edits)",
+                          pose_video_mask=None, unique_id=None):
+        """Only skip the mask wire when user explicitly wants the analyze-time freeze."""
         key = _video_content_key(frames)
         state = _load_phase_state()
         pass_through, _ = _phase_decision(phase, key, state.get("analyzed_key"))
@@ -1261,17 +1267,21 @@ class GAPPhaseGate:
             and frozen.shape[1] == frames.shape[1]
             and frozen.shape[2] == frames.shape[2]
         )
-        if pass_through and frozen_ok:
+        use_frozen = on_generate.startswith("use frozen")
+        if pass_through and use_frozen and frozen_ok:
             return []
+        # LIVE (default): always pull the wire so MaskEditor paints reach us
         return ["pose_video_mask"]
 
-    def gate(self, frames, phase, pose_video_mask=None, unique_id=None):
+    def gate(self, frames, phase, on_generate="use live mask (keeps paint edits)",
+             pose_video_mask=None, unique_id=None):
         from comfy_execution.graph_utils import ExecutionBlocker
 
         key = _video_content_key(frames)
         state = _load_phase_state()
         stored_key = state.get("analyzed_key")
         pass_through, store = _phase_decision(phase, key, stored_key)
+        use_frozen = on_generate.startswith("use frozen")
 
         frozen = _load_frozen_mask()
         frozen_ok = (
@@ -1281,84 +1291,101 @@ class GAPPhaseGate:
             and frozen.shape[2] == frames.shape[2]
         )
         out_mask = pose_video_mask
+
         if pass_through:
-            # Prefer the mask reviewed during analysis — SAM3 often reshuffles
-            # object IDs when it re-tracks on the generate queue.
-            if frozen_ok:
+            if use_frozen and frozen_ok:
                 out_mask = frozen
-                log.info("phase gate: using frozen pose mask (%d frames) — SAM3 tracking SKIPPED",
-                         frozen.shape[0])
-            elif out_mask is None:
-                out_mask = torch.zeros((frames.shape[0], frames.shape[1], frames.shape[2], 3),
-                                       dtype=torch.float32)
-                log.warning("phase gate: no pose_video_mask wired and no freeze on disk - "
-                            "generator will see an empty mask")
-            else:
-                log.warning("phase gate: no compatible freeze - using live mask "
-                            "(identity colors may reshuffle vs analysis)")
-        else:
-            # Analysis pass: persist the mask the user is reviewing.
-            # Do NOT clobber an existing same-shape freeze on a spurious auto
-            # re-analyze (content-key jitter) — only refresh on explicit phase 1
-            # or when there is no usable freeze yet.
-            if pose_video_mask is not None:
-                refresh = (
-                    phase.startswith("1")
-                    or not frozen_ok
-                    or stored_key is None
-                )
-                if refresh:
-                    _save_frozen_mask(pose_video_mask)
-                    state["mask_fp"] = _mask_fingerprint(pose_video_mask)
-                    out_mask = pose_video_mask
-                    log.info("phase gate: froze pose mask (%d frames) for generate pass",
-                             pose_video_mask.shape[0])
-                else:
-                    out_mask = frozen
-                    # Key drifted but freeze is good → flip to generate this queue
-                    pass_through = True
-                    store = key
-                    log.info("phase gate: kept frozen mask despite key drift - generating "
-                             "(SAM3 SKIPPED)")
+                log.info("phase gate: using FROZEN mask (%d frames) — SAM3 skipped; "
+                         "post-analyze paint edits are NOT applied", frozen.shape[0])
+                mask_check_out = ExecutionBlocker(None)
+                msg = ("PHASE 2 — RENDERING (frozen mask, SAM3 skipped)\n\n"
+                       "Using the mask frozen at analysis — paint edits after Run 1 are ignored.\n"
+                       "To keep paint edits: set on_generate to 'use live mask'.")
+                _progress_text("PHASE 2: frozen mask (edits ignored)", unique_id)
+            elif pose_video_mask is not None:
+                # Live path — this is what keeps MaskEditor / paint fixes
+                out_mask = pose_video_mask
+                _save_frozen_mask(pose_video_mask)
+                state["mask_fp"] = _mask_fingerprint(pose_video_mask)
+                log.info("phase gate: using LIVE mask (%d frames) — paint edits kept, freeze updated",
+                         pose_video_mask.shape[0])
+                mask_check_out = out_mask
+                msg = ("PHASE 2 — RENDERING (live mask, your paint edits kept)\n\n"
+                       "Generation uses the current mask on the wire (including edits after analyze).\n"
+                       "Freeze file was updated to this mask.")
+                _progress_text("PHASE 2: live mask — edits kept", unique_id)
             elif frozen_ok:
                 out_mask = frozen
-                if phase.startswith("auto"):
-                    pass_through = True
-                    store = key
-                    log.info("phase gate: no live mask; using freeze and generating")
+                mask_check_out = ExecutionBlocker(None)
+                msg = ("PHASE 2 — RENDERING (fallback to frozen mask)\n\n"
+                       "No live mask arrived — using freeze from analysis.")
+                _progress_text("PHASE 2: fallback frozen mask", unique_id)
+                log.warning("phase gate: live mask missing on generate — falling back to freeze")
             else:
                 out_mask = torch.zeros((frames.shape[0], frames.shape[1], frames.shape[2], 3),
                                        dtype=torch.float32)
-                log.warning("phase gate: pose_video_mask not wired - MASK CHECK / generator "
-                            "cannot see identity colors. Wire SCAIL2ColoredMask into this node.")
+                mask_check_out = ExecutionBlocker(None)
+                msg = "PHASE 2 — RENDERING\n\nWARNING: no mask available."
+                _progress_text("PHASE 2: NO MASK", unique_id)
+                log.warning("phase gate: no live mask and no freeze")
 
-        if store != stored_key or state.get("analyzed_key") != store:
-            state["analyzed_key"] = store
-            _save_phase_state(state)
+            if store != stored_key or state.get("analyzed_key") != store:
+                state["analyzed_key"] = store
+                _save_phase_state(state)
+            else:
+                # still persist mask_fp if we updated freeze above
+                _save_phase_state(state)
 
-        if pass_through:
-            msg = ("PHASE 2 — RENDERING (frozen mask, SAM3 skipped)\n\n"
-                   "Generation is running with the mask locked at analysis.\n"
-                   "MASK CHECK / Timeline are intentionally NOT re-run.\n"
-                   "Changed object_indices? Set phase to '1 - analyze only' once, then generate.")
-            _progress_text("PHASE 2: frozen mask — SAM3 skipped", unique_id)
             log.info("phase gate: rendering pass")
-            # Block MASK CHECK / Timeline so Run 2 does not look like remasking
-            return (frames, msg, out_mask, ExecutionBlocker(None))
+            return (frames, msg, out_mask, mask_check_out)
 
-        again = ("Press Run again — rendering starts automatically with this mask frozen."
+        # ----- analysis pass -----
+        if pose_video_mask is not None:
+            # Always save what analysis sees. If you painted and re-run phase 1,
+            # that commits the painted mask into the freeze file.
+            _save_frozen_mask(pose_video_mask)
+            state["mask_fp"] = _mask_fingerprint(pose_video_mask)
+            out_mask = pose_video_mask
+            log.info("phase gate: froze pose mask (%d frames) for later use",
+                     pose_video_mask.shape[0])
+        elif frozen_ok:
+            out_mask = frozen
+            if phase.startswith("auto"):
+                # No live mask but freeze exists — treat as generate
+                pass_through = True
+                store = key
+                log.info("phase gate: no live mask on analyze; switching to generate with freeze")
+                state["analyzed_key"] = store
+                _save_phase_state(state)
+                msg = ("PHASE 2 — RENDERING (frozen mask)\n\n"
+                       "No live mask on the wire; using freeze.")
+                _progress_text("PHASE 2: frozen mask", unique_id)
+                return (frames, msg, out_mask, ExecutionBlocker(None))
+        else:
+            out_mask = torch.zeros((frames.shape[0], frames.shape[1], frames.shape[2], 3),
+                                   dtype=torch.float32)
+            log.warning("phase gate: pose_video_mask not wired")
+
+        state["analyzed_key"] = store
+        _save_phase_state(state)
+
+        again = ("Press Run again to render. If you paint the mask after this, leave "
+                 "on_generate = 'use live mask' (default) so edits are kept — "
+                 "or set phase to '1' once after painting to re-freeze."
                  if phase.startswith("auto") else
-                 "Set phase to '2 - generate video' (or 'auto') and press Run.")
-        msg = ("PHASE 1 COMPLETE — ANALYSIS ONLY (generation was skipped on purpose)\n\n"
-               "Pose mask is now FROZEN for the next generate pass.\n\n"
-               "Review, then continue:\n"
-               "  1. MASK CHECK video (group 4): is each person the right color?\n"
-               "  2. REF MASK preview (group 3): full colored silhouette per character?\n"
-               "  3. FOOTAGE ANALYSIS (group 8): copy schedule_template into prompt_schedule, fill actions.\n"
-               "  4. Wrong colors? Fix object_indices, set phase to '1', Run again to re-freeze.\n"
-               "  5. " + again)
-        _progress_text("PHASE 1 done — mask frozen; press Run again to render", unique_id)
-        log.info("phase gate: analysis pass complete - next queue will render with frozen mask")
+                 "Set phase to '2' (or 'auto') and press Run. "
+                 "Painted after this? use live mask / or phase 1 again to re-freeze.")
+        msg = ("PHASE 1 COMPLETE — ANALYSIS ONLY\n\n"
+               "Mask from this pass is saved as freeze.\n\n"
+               "If you PAINT/fix the mask after this:\n"
+               "  • keep on_generate = 'use live mask' (default), OR\n"
+               "  • set phase to '1', Run once more to commit paint into freeze,\n"
+               "    then generate with 'use frozen mask'.\n\n"
+               "Paint node must sit BETWEEN Colored Mask and this Phase Gate.\n"
+               "Painting only on MASK CHECK preview does NOT feed the generator.\n\n"
+               "Next: " + again)
+        _progress_text("PHASE 1 done — paint then Run again (live mask)", unique_id)
+        log.info("phase gate: analysis pass complete")
         return (ExecutionBlocker(None), msg, out_mask, out_mask)
 
 

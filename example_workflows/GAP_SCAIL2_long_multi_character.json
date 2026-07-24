@@ -1792,7 +1792,7 @@
       ],
       "size": [
         560,
-        180
+        200
       ],
       "flags": {},
       "order": 50,
@@ -1841,12 +1841,13 @@
           ]
         }
       ],
-      "title": "PHASE GATE — freeze mask; mask_check only on analyze",
+      "title": "PHASE GATE — live mask keeps paint edits",
       "properties": {
         "Node name for S&R": "GAPPhaseGate"
       },
       "widgets_values": [
-        "auto (Run 1 analyzes, Run 2 renders)"
+        "auto (Run 1 analyzes, Run 2 renders)",
+        "use live mask (keeps paint edits)"
       ]
     },
     {
