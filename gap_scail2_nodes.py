@@ -565,17 +565,40 @@ def _fingerprint(total_frames, width, height, chunk_length, overlap, replacement
 
 
 def _video_content_key(frames):
-    """Stable-enough key to notice a different driving video between queues.
-    Stronger than shape+endpoint means alone (false 'same video' collisions)."""
-    t = int(frames.shape[0])
-    idxs = sorted({0, max(0, t // 2), max(0, t - 1)})
-    parts = [str(tuple(frames.shape))]
-    for i in idxs:
-        parts.append(f"{float(frames[i].float().mean()):.6f}")
+    """Identity key for the driving clip between queues.
+
+    MUST stay stable across re-decode / resize float noise — hashing raw
+    float32 pixels made Run 2 look like a new video, re-ran analysis, and
+    overwrote the frozen mask (identity colors reshuffled). Quantize hard.
+    """
+    t, h, w = int(frames.shape[0]), int(frames.shape[1]), int(frames.shape[2])
+    idxs = sorted({0, t // 2, max(0, t - 1)})
+    means = [round(float(frames[i][..., :3].float().mean()), 2) for i in idxs]
     small = F.interpolate(
-        frames[0:1, ..., :3].movedim(-1, 1).float(), size=(8, 8), mode="area")
-    parts.append(hashlib.sha1(small.detach().cpu().numpy().tobytes()).hexdigest()[:12])
-    return "|".join(parts)
+        frames[0:1, ..., :3].movedim(-1, 1).float().clamp(0.0, 1.0),
+        size=(8, 8), mode="area")
+    # uint8 spatial fingerprint — immune to tiny float jitter
+    digest = hashlib.sha1(
+        (small * 255.0).round().to(torch.uint8).cpu().numpy().tobytes()
+    ).hexdigest()[:10]
+    return f"{t}x{h}x{w}|{means[0]:.2f}|{means[1]:.2f}|{means[2]:.2f}|{digest}"
+
+
+def _same_driving_clip(stored_key, key):
+    """True when keys refer to the same clip (exact match, or same geometry
+    with means within tolerance — guards residual fingerprint jitter)."""
+    if not stored_key or not key:
+        return False
+    if stored_key == key:
+        return True
+    try:
+        s_shape, s0, s1, s2, _ = stored_key.split("|", 4)
+        k_shape, k0, k1, k2, _ = key.split("|", 4)
+    except ValueError:
+        return False
+    if s_shape != k_shape:
+        return False
+    return all(abs(float(a) - float(b)) <= 0.05 for a, b in ((s0, k0), (s1, k1), (s2, k2)))
 
 
 def _phase_state_paths():
@@ -1176,9 +1199,9 @@ def _phase_decision(phase, key, stored_key):
         return True, stored_key if stored_key is not None else key
     if phase.startswith("1"):
         return False, key
-    # auto
-    if stored_key == key:
-        return True, stored_key
+    # auto — treat near-identical keys as the same clip (float/re-decode jitter)
+    if _same_driving_clip(stored_key, key):
+        return True, key  # refresh stored key to the latest stable fingerprint
     return False, key
 
 
@@ -1230,7 +1253,13 @@ class GAPPhaseGate:
         state = _load_phase_state()
         pass_through, _ = _phase_decision(phase, key, state.get("analyzed_key"))
         frozen = _load_frozen_mask()
-        if pass_through and frozen is not None and state.get("analyzed_key") == key:
+        frozen_ok = (
+            frozen is not None
+            and frozen.shape[0] == frames.shape[0]
+            and frozen.shape[1] == frames.shape[1]
+            and frozen.shape[2] == frames.shape[2]
+        )
+        if pass_through and frozen_ok:
             return []
         return ["pose_video_mask"]
 
@@ -1241,35 +1270,56 @@ class GAPPhaseGate:
         pass_through, store = _phase_decision(phase, key, stored_key)
 
         frozen = _load_frozen_mask()
+        frozen_ok = (
+            frozen is not None
+            and frozen.shape[0] == frames.shape[0]
+            and frozen.shape[1] == frames.shape[1]
+            and frozen.shape[2] == frames.shape[2]
+        )
         out_mask = pose_video_mask
         if pass_through:
             # Prefer the mask reviewed during analysis — SAM3 often reshuffles
             # object IDs when it re-tracks on the generate queue.
-            if frozen is not None and (store == key or stored_key == key
-                                       or phase.startswith("2")):
-                if (frozen.shape[0] == frames.shape[0]
-                        and frozen.shape[1] == frames.shape[1]
-                        and frozen.shape[2] == frames.shape[2]):
-                    out_mask = frozen
-                    log.info("phase gate: using frozen pose mask (%d frames)", frozen.shape[0])
-                else:
-                    log.warning("frozen pose mask shape %s incompatible with frames %s - using live mask",
-                                tuple(frozen.shape), tuple(frames.shape))
-            if out_mask is None:
+            if frozen_ok:
+                out_mask = frozen
+                log.info("phase gate: using frozen pose mask (%d frames)", frozen.shape[0])
+            elif out_mask is None:
                 out_mask = torch.zeros((frames.shape[0], frames.shape[1], frames.shape[2], 3),
                                        dtype=torch.float32)
                 log.warning("phase gate: no pose_video_mask wired and no freeze on disk - "
                             "generator will see an empty mask")
+            else:
+                log.warning("phase gate: no compatible freeze - using live mask "
+                            "(identity colors may reshuffle vs analysis)")
         else:
-            # Analysis pass: persist whatever mask the user is reviewing.
+            # Analysis pass: persist the mask the user is reviewing.
+            # Do NOT clobber an existing same-shape freeze on a spurious auto
+            # re-analyze (content-key jitter) — only refresh on explicit phase 1
+            # or when there is no usable freeze yet.
             if pose_video_mask is not None:
-                _save_frozen_mask(pose_video_mask)
-                state["mask_fp"] = _mask_fingerprint(pose_video_mask)
-                out_mask = pose_video_mask
-                log.info("phase gate: froze pose mask (%d frames) for generate pass",
-                         pose_video_mask.shape[0])
-            elif frozen is not None:
+                refresh = (
+                    phase.startswith("1")
+                    or not frozen_ok
+                    or stored_key is None
+                )
+                if refresh:
+                    _save_frozen_mask(pose_video_mask)
+                    state["mask_fp"] = _mask_fingerprint(pose_video_mask)
+                    out_mask = pose_video_mask
+                    log.info("phase gate: froze pose mask (%d frames) for generate pass",
+                             pose_video_mask.shape[0])
+                else:
+                    out_mask = frozen
+                    # Key drifted but freeze is good → flip to generate this queue
+                    pass_through = True
+                    store = key
+                    log.info("phase gate: kept frozen mask despite key drift - generating")
+            elif frozen_ok:
                 out_mask = frozen
+                if phase.startswith("auto"):
+                    pass_through = True
+                    store = key
+                    log.info("phase gate: no live mask; using freeze and generating")
             else:
                 out_mask = torch.zeros((frames.shape[0], frames.shape[1], frames.shape[2], 3),
                                        dtype=torch.float32)
