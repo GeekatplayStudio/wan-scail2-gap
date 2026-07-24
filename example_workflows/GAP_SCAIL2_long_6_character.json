@@ -1,8 +1,8 @@
 {
   "id": "a7c1f2d3-4b5e-4f6a-8b9c-0d1e2f3a4b5c",
   "revision": 0,
-  "last_node_id": 59,
-  "last_link_id": 84,
+  "last_node_id": 61,
+  "last_link_id": 91,
   "nodes": [
     {
       "id": 2,
@@ -255,9 +255,7 @@
           "name": "pose_video_mask",
           "type": "IMAGE",
           "links": [
-            15,
-            36,
-            41
+            85
           ]
         },
         {
@@ -914,7 +912,7 @@
         {
           "name": "pose_video_mask",
           "type": "IMAGE",
-          "link": 36
+          "link": 87
         },
         {
           "name": "fps",
@@ -1063,7 +1061,7 @@
         {
           "name": "image2",
           "type": "IMAGE",
-          "link": 41
+          "link": 88
         }
       ],
       "outputs": [
@@ -1295,7 +1293,7 @@
       "title": "⑧ Footage analysis — phase 1",
       "properties": {},
       "widgets_values": [
-        "### Analyze before you render (automatic)\nThe **PHASE GATE** (top of ⑥) defaults to `auto`:\n\n1. **Run 1** → tracking, MASK CHECK video and this analysis run; generation is skipped. The **NEXT STEP** panel under the gate tells you exactly what to review.\n2. Copy **schedule_template** into **prompt_schedule**, fill in the actions; check masks.\n3. Copy **CHARACTER PROMPTS TEMPLATE** (new panel below) into **character_prompts** on the generator, then edit each line to describe what that reference image actually shows. Every detected character needs its own line - one left out gets only a generic fallback description (still works, but a real description resembles the reference much better).\n4. **Run 2** (just press Run again) → rendering starts; analysis is cached.\n\nNew video loaded → the next Run is an analysis pass again, automatically.\nForce behavior anytime: phase `1` = always analyze, `2` = always render."
+        "### Analyze before you render (automatic)\nThe **PHASE GATE** (top of ⑥) defaults to `auto`:\n\n1. **Run 1** → tracking, MASK CHECK and analysis run; generation is skipped. The pose mask is **FROZEN** so Run 2 cannot reshuffle identity colors. The **NEXT STEP** panel under the gate tells you what to review.\n2. Copy **schedule_template** into **prompt_schedule**, fill in the actions; check masks.\n3. Copy **CHARACTER PROMPTS TEMPLATE** into **character_prompts** on the generator, then edit each line.\n4. **Run 2** (press Run again) → rendering with the frozen mask; SAM3 tracking can be skipped.\n\nChanged `object_indices` / re-tracked? Set phase to `1 - analyze only`, Run once to refresh the freeze, then generate.\nNew video loaded → next Run is analysis again.\nForce anytime: phase `1` = analyze+freeze, `2` = render with freeze."
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -1318,7 +1316,7 @@
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 52
+          "link": 91
         }
       ],
       "outputs": [
@@ -1328,7 +1326,7 @@
           "links": null
         }
       ],
-      "title": "REF MASK CHECK: composite primary + one color per character",
+      "title": "REF MASK mirror — крась на ноде PAINT, не здесь",
       "properties": {
         "cnr_id": "comfy-core",
         "ver": "0.27.0",
@@ -1906,8 +1904,7 @@
           "name": "reference_image_mask",
           "type": "IMAGE",
           "links": [
-            24,
-            52
+            89
           ]
         },
         {
@@ -2529,8 +2526,8 @@
         140
       ],
       "size": [
-        520,
-        128
+        560,
+        200
       ],
       "flags": {},
       "order": 40,
@@ -2540,6 +2537,12 @@
           "name": "frames",
           "type": "IMAGE",
           "link": 51
+        },
+        {
+          "name": "pose_video_mask",
+          "type": "IMAGE",
+          "link": 85,
+          "shape": 7
         }
       ],
       "outputs": [
@@ -2556,16 +2559,32 @@
           "links": [
             55
           ]
+        },
+        {
+          "name": "pose_video_mask",
+          "type": "IMAGE",
+          "links": [
+            86
+          ]
+        },
+        {
+          "name": "mask_check",
+          "type": "IMAGE",
+          "links": [
+            87,
+            88
+          ]
         }
       ],
-      "title": "PHASE GATE — Run 1: analyze | Run 2: render (auto)",
+      "title": "PHASE GATE — live mask keeps paint edits",
       "properties": {
         "aux_id": "GeekatplayStudio/wan-scail2-gap",
         "ver": "74f351334bf7076fa1a4e55946130ae5aed20b1e",
         "Node name for S&R": "GAPPhaseGate"
       },
       "widgets_values": [
-        "2 - generate video"
+        "auto (Run 1 analyzes, Run 2 renders)",
+        "use live mask (keeps paint edits)"
       ]
     },
     {
@@ -2606,7 +2625,7 @@
         {
           "name": "pose_video_mask",
           "type": "IMAGE",
-          "link": 15
+          "link": 86
         },
         {
           "name": "reference_image",
@@ -2616,7 +2635,7 @@
         {
           "name": "reference_image_mask",
           "type": "IMAGE",
-          "link": 24
+          "link": 90
         },
         {
           "name": "clip_vision_output",
@@ -2740,6 +2759,88 @@
         null,
         false
       ]
+    },
+    {
+      "id": 60,
+      "type": "GAPRefMaskPaint",
+      "pos": [
+        -610,
+        1430
+      ],
+      "size": [
+        340,
+        360
+      ],
+      "flags": {},
+      "order": 39,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "reference_image_mask",
+          "type": "IMAGE",
+          "link": 89
+        },
+        {
+          "name": "reset",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "reset"
+          },
+          "link": null
+        },
+        {
+          "name": "image",
+          "type": "STRING",
+          "widget": {
+            "name": "image"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "reference_image_mask",
+          "type": "IMAGE",
+          "links": [
+            90,
+            91
+          ]
+        }
+      ],
+      "title": "REF MASK PAINT — крась ЗДЕСЬ (Mask Editor → Save)",
+      "properties": {
+        "Node name for S&R": "GAPRefMaskPaint"
+      },
+      "widgets_values": [
+        false,
+        ""
+      ],
+      "color": "#2a4",
+      "bgcolor": "#143"
+    },
+    {
+      "id": 61,
+      "type": "MarkdownNote",
+      "pos": [
+        -250,
+        1430
+      ],
+      "size": [
+        400,
+        240
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Как докрасить REF MASK",
+      "properties": {},
+      "widgets_values": [
+        "### Дорисовка REF MASK (правильно)\n\n1. **Run 1** (analyze)\n2. ПКМ по ноде **REF MASK PAINT** → Open in Mask Editor\n3. Дорисуй → Save / применить на изображении\n4. **Run 2** (generate) — правка сохранится\n\nНе крась старый Preview «REF MASK CHECK» — он был только для просмотра и не шёл в генератор.\n\nЧтобы сбросить дорисовку: `reset = ON` на ноде PAINT, один Run, потом снова OFF.\n"
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
     }
   ],
   "links": [
@@ -2856,14 +2957,6 @@
       "SAM3_TRACK_DATA"
     ],
     [
-      15,
-      9,
-      0,
-      23,
-      4,
-      "IMAGE"
-    ],
-    [
       16,
       10,
       0,
@@ -2917,14 +3010,6 @@
       2,
       22,
       1,
-      "IMAGE"
-    ],
-    [
-      24,
-      15,
-      1,
-      23,
-      6,
       "IMAGE"
     ],
     [
@@ -3016,14 +3101,6 @@
       "VIDEO"
     ],
     [
-      36,
-      9,
-      0,
-      29,
-      0,
-      "IMAGE"
-    ],
-    [
       37,
       29,
       0,
@@ -3053,14 +3130,6 @@
       0,
       32,
       0,
-      "IMAGE"
-    ],
-    [
-      41,
-      9,
-      0,
-      32,
-      1,
       "IMAGE"
     ],
     [
@@ -3140,14 +3209,6 @@
       5,
       0,
       42,
-      0,
-      "IMAGE"
-    ],
-    [
-      52,
-      15,
-      1,
-      43,
       0,
       "IMAGE"
     ],
@@ -3389,6 +3450,62 @@
       0,
       15,
       10,
+      "IMAGE"
+    ],
+    [
+      85,
+      9,
+      0,
+      42,
+      1,
+      "IMAGE"
+    ],
+    [
+      86,
+      42,
+      2,
+      23,
+      4,
+      "IMAGE"
+    ],
+    [
+      87,
+      42,
+      3,
+      29,
+      0,
+      "IMAGE"
+    ],
+    [
+      88,
+      42,
+      3,
+      32,
+      1,
+      "IMAGE"
+    ],
+    [
+      89,
+      15,
+      1,
+      60,
+      0,
+      "IMAGE"
+    ],
+    [
+      90,
+      60,
+      0,
+      23,
+      6,
+      "IMAGE"
+    ],
+    [
+      91,
+      60,
+      0,
+      43,
+      0,
       "IMAGE"
     ]
   ],

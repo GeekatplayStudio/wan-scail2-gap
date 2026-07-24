@@ -74,6 +74,23 @@ exactly what to set.
    video automatically makes the next Run an analysis pass again.
 5. The final video (with audio) and a per-chunk report land in ⑦.
 
+### Mask freeze (v1.4 — identity colors stay locked)
+
+The **PHASE GATE** freezes the colored pose mask reviewed in Run 1 and reuses it on Run 2.
+That stops SAM3 from re-tracking on generate and reshuffling who is blue/red/green — the
+usual cause of “mask edits / assignments reset when generation starts”, independent of the
+analyze/generate slider.
+
+- Wire `SCAIL2ColoredMask.pose_video_mask` **into** the Phase Gate, then take the gate’s
+  `pose_video_mask` output into Long Video / Timeline / Mask Check (example workflows
+  already do this).
+- Changed `object_indices` or re-tracked people? Set phase to **`1 - analyze only`**, Run
+  once to refresh the freeze, then generate.
+- On generate, ComfyUI lazy inputs can skip SAM3 entirely when a freeze is on disk.
+- **REF MASK PAINT** (v1.4.5): keeps Mask Editor edits across Run 2 and fits them with the
+  same **letterbox** policy as Multi-Character Reference (never stretch). Paint on that
+  node, not on a mirror Preview.
+
 ## Nodes
 
 | Node | Purpose |
@@ -83,7 +100,7 @@ exactly what to set.
 | **GAP Character Extra View** | Appends an extra reference view (back view / close-up) for one character — chain freely. |
 | **GAP Character Timeline** | Footage analysis: who appears when + auto-generated schedule template. |
 | **GAP SCAIL-2 Chunk Planner** | Dry-run: chunk boundaries and exact per-chunk prompts without loading the diffusion model. |
-| **GAP Phase Gate** | Auto two-phase execution: Run 1 analyzes, Run 2 renders (manual 1/2 override available). Its `next_step` output feeds the NEXT STEP panel. |
+| **GAP Phase Gate** | Auto two-phase execution: Run 1 analyzes + **freezes the pose mask**, Run 2 renders with that locked mask (manual 1/2 override available). Its `next_step` output feeds the NEXT STEP panel; `pose_video_mask` out feeds Long Video / Timeline / Mask Check. |
 
 ## New render vs resume (cache_mode)
 

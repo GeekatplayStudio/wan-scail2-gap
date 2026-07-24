@@ -394,13 +394,28 @@ _XYZ2RGB = ((3.240479, -1.537150, -0.498535),
             (-0.969256, 1.875992, 0.041556),
             (0.055648, -0.204043, 1.057311))
 
+# Cached on-device LAB matrices — rebuilt only when device/dtype changes.
+_lab_mats = {}
+
+
+def _lab_matrices(device, dtype):
+    key = (str(device), dtype)
+    mats = _lab_mats.get(key)
+    if mats is None:
+        mats = (
+            torch.tensor(_RGB2XYZ, dtype=dtype, device=device),
+            torch.tensor(_XYZ2RGB, dtype=dtype, device=device),
+            torch.tensor(_LAB_WP, dtype=dtype, device=device).view(1, 3, 1, 1),
+        )
+        _lab_mats[key] = mats
+    return mats
+
 
 def _rgb_to_lab(rgb):
     """(B,3,H,W) sRGB in [0,1] -> CIELAB. Pure torch."""
     lin = torch.where(rgb > 0.04045, ((rgb + 0.055) / 1.055).clamp(min=0.0) ** 2.4, rgb / 12.92)
-    m = torch.tensor(_RGB2XYZ, dtype=lin.dtype, device=lin.device)
-    xyz = torch.einsum("ij,bjhw->bihw", m, lin)
-    xyz = xyz / torch.tensor(_LAB_WP, dtype=lin.dtype, device=lin.device).view(1, 3, 1, 1)
+    m, _, wp = _lab_matrices(lin.device, lin.dtype)
+    xyz = torch.einsum("ij,bjhw->bihw", m, lin) / wp
     f = torch.where(xyz > 0.008856, xyz.clamp(min=1e-8) ** (1.0 / 3.0), 7.787 * xyz + 16.0 / 116.0)
     fx, fy, fz = f[:, 0:1], f[:, 1:2], f[:, 2:3]
     return torch.cat([116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)], dim=1)
@@ -414,8 +429,8 @@ def _lab_to_rgb(lab):
     fz = fy - b / 200.0
     f = torch.cat([fx, fy, fz], dim=1)
     xyz = torch.where(f ** 3 > 0.008856, f ** 3, (f - 16.0 / 116.0) / 7.787)
-    xyz = xyz * torch.tensor(_LAB_WP, dtype=lab.dtype, device=lab.device).view(1, 3, 1, 1)
-    m = torch.tensor(_XYZ2RGB, dtype=lab.dtype, device=lab.device)
+    _, m, wp = _lab_matrices(lab.device, lab.dtype)
+    xyz = xyz * wp
     lin = torch.einsum("ij,bjhw->bihw", m, xyz)
     return torch.where(lin > 0.0031308, 1.055 * lin.clamp(min=0.0) ** (1.0 / 2.4) - 0.055, 12.92 * lin)
 
@@ -518,12 +533,123 @@ def _cache_dir(cache_id):
     return d
 
 
-def _fingerprint(total_frames, width, height, chunk_length, overlap, replacement_mode, cuts=()):
+def _mask_fingerprint(mask_video):
+    """Cheap stable hash of a colored mask video (shape + sampled frame means).
+    Used so resume/cache invalidates when identity colors / object_indices change."""
+    if mask_video is None:
+        return "nomask"
+    t = int(mask_video.shape[0])
+    idxs = sorted({0, max(0, t // 2), max(0, t - 1)})
+    h = hashlib.sha1()
+    h.update(str(tuple(mask_video.shape)).encode())
+    for i in idxs:
+        frame = mask_video[i, ..., :3].float().mean(dim=(0, 1))
+        h.update(frame.detach().cpu().numpy().tobytes())
+    # coarse spatial sample of the middle frame catches remaps with similar means
+    mid = mask_video[idxs[len(idxs) // 2], ..., :3].movedim(-1, 0).float().unsqueeze(0)
+    small = F.interpolate(mid, size=(8, 8), mode="area")
+    h.update(small.detach().cpu().numpy().tobytes())
+    return h.hexdigest()[:16]
+
+
+def _fingerprint(total_frames, width, height, chunk_length, overlap, replacement_mode, cuts=(),
+                 mask_fp=""):
     """Structural settings that make cached chunks (in)compatible. Prompts and
-    seeds are deliberately excluded so single chunks can be re-rendered."""
+    seeds are deliberately excluded so single chunks can be re-rendered.
+    Mask fingerprint is included so editing object_indices / frozen masks
+    cannot silently reuse chunks from a different identity map."""
     key = f"{total_frames}|{width}|{height}|{chunk_length}|{overlap}|{replacement_mode}"
     key += "|cuts:" + ",".join(str(c) for c in cuts)
+    key += "|mask:" + (mask_fp or "nomask")
     return hashlib.sha1(key.encode()).hexdigest()[:16]
+
+
+def _video_content_key(frames):
+    """Identity key for the driving clip between queues.
+
+    MUST stay stable across re-decode / resize float noise — hashing raw
+    float32 pixels made Run 2 look like a new video, re-ran analysis, and
+    overwrote the frozen mask (identity colors reshuffled). Quantize hard.
+    """
+    t, h, w = int(frames.shape[0]), int(frames.shape[1]), int(frames.shape[2])
+    idxs = sorted({0, t // 2, max(0, t - 1)})
+    means = [round(float(frames[i][..., :3].float().mean()), 2) for i in idxs]
+    small = F.interpolate(
+        frames[0:1, ..., :3].movedim(-1, 1).float().clamp(0.0, 1.0),
+        size=(8, 8), mode="area")
+    # uint8 spatial fingerprint — immune to tiny float jitter
+    digest = hashlib.sha1(
+        (small * 255.0).round().to(torch.uint8).cpu().numpy().tobytes()
+    ).hexdigest()[:10]
+    return f"{t}x{h}x{w}|{means[0]:.2f}|{means[1]:.2f}|{means[2]:.2f}|{digest}"
+
+
+def _same_driving_clip(stored_key, key):
+    """True when keys refer to the same clip.
+
+    Requires matching geometry + spatial digest. Mean values may drift slightly
+    from re-decode; digest (uint8 8×8) must match so a different video of the
+    same length/resolution cannot skip analyze.
+    """
+    if not stored_key or not key:
+        return False
+    if stored_key == key:
+        return True
+    try:
+        s_parts = stored_key.split("|")
+        k_parts = key.split("|")
+        if len(s_parts) != 5 or len(k_parts) != 5:
+            return False
+        if s_parts[0] != k_parts[0]:
+            return False
+        if s_parts[4] != k_parts[4]:
+            return False
+        return all(
+            abs(float(s_parts[i]) - float(k_parts[i])) <= 0.05
+            for i in (1, 2, 3)
+        )
+    except ValueError:
+        return False
+
+
+def _phase_state_paths():
+    d = _cache_dir("_phase_state")
+    return (os.path.join(d, "state.json"), os.path.join(d, "pose_mask.pt"))
+
+
+def _load_phase_state():
+    state_path, _ = _phase_state_paths()
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_phase_state(state):
+    state_path, _ = _phase_state_paths()
+    tmp = state_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(tmp, state_path)
+
+
+def _save_frozen_mask(mask):
+    _, mask_path = _phase_state_paths()
+    tmp = mask_path + ".tmp"
+    torch.save(mask.detach().half().contiguous().cpu(), tmp)
+    os.replace(tmp, mask_path)
+
+
+def _load_frozen_mask():
+    _, mask_path = _phase_state_paths()
+    if not os.path.exists(mask_path):
+        return None
+    try:
+        return torch.load(mask_path, map_location="cpu", weights_only=True).float()
+    except Exception as e:
+        log.warning("unreadable frozen pose mask (%s) - ignoring", e)
+        return None
 
 
 def _chunk_file(cache_dir, index):
@@ -688,6 +814,31 @@ class GAPSCAIL2LongVideo:
             raise ValueError(f"overlap ({overlap}) must be smaller than chunk_length ({chunk_length})")
 
         total_frames = pose_video.shape[0]
+        ph, pw = int(pose_video.shape[1]), int(pose_video.shape[2])
+        if (ph, pw) != (height, width):
+            log.warning(
+                "pose_video is %d×%d (H×W) but width×height is %d×%d — "
+                "WanSCAILToVideo will center-crop/stretch (not letterbox). "
+                "If Resize Image/Mask has WIDTH/HEIGHT linked via DynamicCombo and "
+                "the driving clip stayed at native size, unlink and set width/height "
+                "on the Resize node itself.",
+                ph, pw, height, width,
+            )
+        if pose_video_mask is not None:
+            mh, mw = int(pose_video_mask.shape[1]), int(pose_video_mask.shape[2])
+            if (mh, mw) != (ph, pw):
+                log.warning(
+                    "pose_video_mask %d×%d != pose_video %d×%d (H×W) — masks may misalign",
+                    mh, mw, ph, pw,
+                )
+        if reference_image is not None:
+            rh, rw = int(reference_image.shape[1]), int(reference_image.shape[2])
+            if (rh, rw) != (height, width):
+                log.warning(
+                    "reference_image is %d×%d (H×W) vs gen %d×%d — "
+                    "MultiChar should already letterbox to width×height",
+                    rh, rw, height, width,
+                )
         cuts = _detect_cuts(pose_video, scene_cut_threshold) if detect_scene_cuts else []
         if cuts:
             log.info("scene cuts detected at frames: %s", cuts)
@@ -704,13 +855,14 @@ class GAPSCAIL2LongVideo:
         done = set()
         if use_cache:
             cache_path = _cache_dir(cache_id)
+            mask_fp = _mask_fingerprint(pose_video_mask)
             fp = _fingerprint(total_frames, width, height, chunk_length, overlap, replacement_mode,
-                              cuts=cuts)
+                              cuts=cuts, mask_fp=mask_fp)
             manifest = _load_manifest(cache_path)
             stale = manifest is not None and manifest.get("fingerprint") != fp
             if cache_mode == "new render" or stale:
                 if stale and cache_mode == "resume":
-                    log.warning("cache '%s' belongs to a different job (video/settings changed) - "
+                    log.warning("cache '%s' belongs to a different job (video/settings/mask changed) - "
                                 "starting a new render instead of resuming", cache_id)
                 _clear_cache(cache_path)
                 manifest = None
@@ -738,9 +890,12 @@ class GAPSCAIL2LongVideo:
         negative_cond = None  # encoded lazily, only if something actually generates
 
         # ---- multi-character practical advisories (before any GPU time is spent) ----
+        # Compute presence once and reuse per-chunk (was scanned twice before).
         advisories = []
+        presence = None
         if auto_character_prompts:
-            video_ids = torch.where(_presence_matrix(pose_video_mask, presence_threshold).any(dim=0))[0].tolist()
+            presence = _presence_matrix(pose_video_mask, presence_threshold)
+            video_ids = torch.where(presence.any(dim=0))[0].tolist()
             n_ids = len(video_ids)
             if n_ids >= 3 and cfg <= 2.0:
                 advisories.append(
@@ -787,7 +942,9 @@ class GAPSCAIL2LongVideo:
             midpoint = start + length // 2
             identities = []
             if auto_character_prompts:
-                identities = _detect_identities(pose_video_mask[start:start + length], presence_threshold)
+                # Reuse the full-video presence matrix (peak-per-chunk via any()).
+                chunk_pres = presence[start:start + length].any(dim=0)
+                identities = torch.where(chunk_pres)[0].tolist()
             scheduled = _resolve_schedule(schedule, base_prompt, midpoint)
             if auto_character_prompts:
                 prompt, unmatched = _compose_prompt(scheduled, char_prompts, identities, n_refs)
@@ -898,6 +1055,59 @@ def _letterbox(img_bchw, width, height, bg_value, method="bicubic"):
     y0, x0 = (height - nh) // 2, (width - nw) // 2
     canvas[:, :, y0:y0 + nh, x0:x0 + nw] = resized
     return canvas
+
+
+def _fit_colored_mask(img, target, bg_value=0.0):
+    """Fit a painted/held colored mask to target BHWC size.
+
+    Always keeps the paint: WanSCAIL-style center resize into upstream H×W.
+    Never returns None and never permutes (permute = 90° rotate).
+    """
+    if img is None:
+        return target
+    th, tw = int(target.shape[1]), int(target.shape[2])
+    out = img[..., :3].float()
+    h, w = int(out.shape[1]), int(out.shape[2])
+    if (h, w) == (th, tw):
+        return out
+    if abs((w / max(h, 1)) - (tw / max(th, 1))) > 0.05:
+        log.warning(
+            "GAPRefMaskPaint: painted %d×%d → upstream %d×%d (H×W) via center-crop "
+            "(aspect differed; paint is kept)",
+            h, w, th, tw,
+        )
+    else:
+        log.info(
+            "GAPRefMaskPaint: center-resizing painted mask %d×%d → %d×%d (H×W)",
+            h, w, th, tw,
+        )
+    return comfy.utils.common_upscale(
+        out.movedim(-1, 1), tw, th, "nearest-exact", "center"
+    ).movedim(1, -1)
+
+
+def _clipspace_mtime(path_str):
+    """Best-effort mtime of a Mask Editor / clipspace path."""
+    if not path_str or not str(path_str).strip():
+        return 0.0
+    raw = str(path_str).replace(" [input]", "").replace("[input]", "").strip()
+    candidates = [raw]
+    try:
+        import folder_paths
+        input_dir = folder_paths.get_input_directory()
+        candidates.extend([
+            os.path.join(input_dir, raw),
+            os.path.join(input_dir, "clipspace", os.path.basename(raw)),
+        ])
+    except Exception:
+        pass
+    for p in candidates:
+        try:
+            if p and os.path.isfile(p):
+                return float(os.path.getmtime(p))
+        except Exception:
+            pass
+    return 0.0
 
 
 def _prep_ref(image, mask, width, height, color_idx, bg_value, device):
@@ -1071,31 +1281,49 @@ class GAPCharacterExtraView:
         )
 
 
-def _phase_decision(phase, key, stored_key):
-    """Returns (pass_through, key_to_store). 'auto' blocks the first time it
-    sees a video (analysis pass) and passes on every following queue."""
+# Keys already analyzed in THIS ComfyUI process. Disk analyzed_key alone used to
+# skip straight to generate after restart — user never saw MASK CHECK again.
+_SESSION_ANALYZED_KEYS = set()
+
+
+def _phase_decision(phase, key, stored_key, reanalyze=False):
+    """Returns (pass_through, key_to_store).
+
+    auto: first encounter of this clip in the current ComfyUI session always
+    analyzes (MASK CHECK), even if disk still has analyzed_key from yesterday.
+    Later Runs in the same session generate when the disk key matches.
+    """
     if phase.startswith("2"):
-        return True, stored_key
-    if phase.startswith("1"):
+        return True, stored_key if stored_key is not None else key
+    if phase.startswith("1") or reanalyze:
         return False, key
-    # auto
-    if stored_key == key:
-        return True, stored_key
+    # auto — session-first analyze, then sticky generate
+    if key not in _SESSION_ANALYZED_KEYS:
+        return False, key
+    if _same_driving_clip(stored_key, key):
+        return True, key
     return False, key
 
 
 class GAPPhaseGate:
     """Two-phase execution without muting nodes.
 
-    auto (default): the first Run on a video executes only analysis (tracking,
-    mask check, footage analysis) and skips generation; every following Run
-    renders. Manual '1' / '2' force either behavior. The `next_step` STRING
-    output tells the user what just happened and what to do next — wire it to
-    a Preview Any node."""
+    auto (default): Run 1 analyzes (tracking + MASK CHECK); Run 2 renders.
+
+    Wire SCAIL2ColoredMask → (optional MaskEditor / paint node) → this node's
+    pose_video_mask input. Then:
+      - pose_video_mask OUT → Long Video
+      - mask_check OUT → Timeline / MASK CHECK preview (blocked when using freeze)
+
+    on_generate:
+      - "use live mask" (default): Run 2 pulls the current mask wire so YOUR
+        paint edits after analyze are kept, and the freeze file is updated.
+      - "use frozen mask": Run 2 skips SAM3 and reuses the analyze-time freeze
+        (faster, but discards any painting done after Run 1)."""
 
     CATEGORY = "GAP/SCAIL2"
-    RETURN_TYPES = ("IMAGE", "STRING")
-    RETURN_NAMES = ("frames", "next_step")
+    RETURN_TYPES = ("IMAGE", "STRING", "IMAGE", "IMAGE")
+    RETURN_NAMES = ("frames", "next_step", "pose_video_mask", "mask_check")
     FUNCTION = "gate"
 
     @classmethod
@@ -1105,53 +1333,187 @@ class GAPPhaseGate:
                 "frames": ("IMAGE",),
                 "phase": (["auto (Run 1 analyzes, Run 2 renders)", "1 - analyze only", "2 - generate video"],
                           {"default": "auto (Run 1 analyzes, Run 2 renders)",
-                           "tooltip": "auto: the first Run on a new video does analysis only (generation skipped); just press Run again to render. '1' always analyzes, '2' always renders."}),
+                           "tooltip": "auto: Run 1 analyzes only; Run 2 renders. '1' always analyzes, '2' always renders."}),
+                "on_generate": (
+                    ["use live mask (keeps paint edits)", "use frozen mask (skip SAM3)"],
+                    {"default": "use live mask (keeps paint edits)",
+                     "tooltip": "LIVE (default): Run 2 uses the mask currently on the wire — including anything you painted after analyze — and updates the freeze. FROZEN: Run 2 skips SAM3 and reuses the analyze-time freeze (your post-analyze painting is IGNORED)."},
+                ),
+                "reanalyze": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "force re-analyze this Run",
+                    "label_off": "use cached analyze (auto)",
+                    "tooltip": "ON for one Run: clear the analyze cache and stop after analysis (no generate). Use when auto jumps straight to generate because this video was already analyzed.",
+                }),
+            },
+            "optional": {
+                "pose_video_mask": ("IMAGE", {
+                    "lazy": True,
+                    "tooltip": "From SCAIL2ColoredMask, ideally through a MaskEditor if you paint. pose_video_mask OUT → Long Video; mask_check OUT → Timeline / MASK CHECK.",
+                }),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
     @classmethod
-    def IS_CHANGED(cls, frames, phase, unique_id=None):
-        return float("nan")  # must re-evaluate every queue, or 'Run again' would hit the cache and do nothing
+    def IS_CHANGED(cls, frames, phase, on_generate="use live mask (keeps paint edits)",
+                   reanalyze=False, pose_video_mask=None, unique_id=None):
+        return float("nan")
 
-    def gate(self, frames, phase, unique_id=None):
-        # cheap content key: shape + first/last frame means — enough to notice a new video
-        key = "{}|{:.6f}|{:.6f}".format(
-            tuple(frames.shape), float(frames[0].float().mean()), float(frames[-1].float().mean()))
-        state_path = os.path.join(_cache_dir("_phase_state"), "state.json")
-        stored_key = None
-        try:
-            with open(state_path, "r", encoding="utf-8") as f:
-                stored_key = json.load(f).get("analyzed_key")
-        except Exception:
-            pass
+    def check_lazy_status(self, frames, phase, on_generate="use live mask (keeps paint edits)",
+                          reanalyze=False, pose_video_mask=None, unique_id=None):
+        """Only skip the mask wire when user explicitly wants the analyze-time freeze."""
+        key = _video_content_key(frames)
+        state = _load_phase_state()
+        pass_through, _ = _phase_decision(
+            phase, key, state.get("analyzed_key"), reanalyze=reanalyze)
+        frozen = _load_frozen_mask()
+        frozen_ok = (
+            frozen is not None
+            and frozen.shape[0] == frames.shape[0]
+            and frozen.shape[1] == frames.shape[1]
+            and frozen.shape[2] == frames.shape[2]
+        )
+        use_frozen = on_generate.startswith("use frozen")
+        if pass_through and use_frozen and frozen_ok:
+            return []
+        # LIVE (default): always pull the wire so MaskEditor paints reach us
+        return ["pose_video_mask"]
 
-        pass_through, store = _phase_decision(phase, key, stored_key)
-        if store != stored_key:
-            with open(state_path, "w", encoding="utf-8") as f:
-                json.dump({"analyzed_key": store}, f)
+    def gate(self, frames, phase, on_generate="use live mask (keeps paint edits)",
+             reanalyze=False, pose_video_mask=None, unique_id=None):
+        from comfy_execution.graph_utils import ExecutionBlocker
+
+        key = _video_content_key(frames)
+        state = _load_phase_state()
+        if reanalyze:
+            state.pop("analyzed_key", None)
+            _SESSION_ANALYZED_KEYS.discard(key)
+            # also drop any prior soft-matching keys for this shape
+            _SESSION_ANALYZED_KEYS.difference_update(
+                {k for k in list(_SESSION_ANALYZED_KEYS) if k.startswith(key.split("|", 1)[0] + "|")}
+            )
+            log.info("phase gate: reanalyze=ON — clearing analyze cache, analysis only this Run")
+        stored_key = state.get("analyzed_key")
+        pass_through, store = _phase_decision(
+            phase, key, stored_key, reanalyze=reanalyze)
+        use_frozen = on_generate.startswith("use frozen")
+
+        if not pass_through and key not in _SESSION_ANALYZED_KEYS and _same_driving_clip(stored_key, key):
+            log.info("phase gate: first Run this ComfyUI session → ANALYSIS only (MASK CHECK); "
+                     "press Run again to generate")
+
+        frozen = _load_frozen_mask()
+        frozen_ok = (
+            frozen is not None
+            and frozen.shape[0] == frames.shape[0]
+            and frozen.shape[1] == frames.shape[1]
+            and frozen.shape[2] == frames.shape[2]
+        )
+        out_mask = pose_video_mask
 
         if pass_through:
-            msg = ("PHASE 2 — RENDERING\n\n"
-                   "Generation is running — watch the progress text on the generator node\n"
-                   "and the console for the chunk plan. The finished video lands in OUTPUT.")
-            _progress_text("PHASE 2: rendering", unique_id)
-            log.info("phase gate: rendering pass")
-            return (frames, msg)
+            if use_frozen and frozen_ok:
+                out_mask = frozen
+                log.info("phase gate: using FROZEN mask (%d frames) — SAM3 skipped; "
+                         "post-analyze paint edits are NOT applied", frozen.shape[0])
+                # Still show MASK CHECK — never swallow the preview on generate
+                mask_check_out = out_mask
+                msg = ("PHASE 2 — RENDERING (frozen mask, SAM3 skipped)\n\n"
+                       "Using the mask frozen at analysis — paint edits after Run 1 are ignored.\n"
+                       "To keep paint edits: set on_generate to 'use live mask'.")
+                _progress_text("PHASE 2: frozen mask (edits ignored)", unique_id)
+            elif pose_video_mask is not None:
+                # Live path — this is what keeps MaskEditor / paint fixes
+                out_mask = pose_video_mask
+                _save_frozen_mask(pose_video_mask)
+                state["mask_fp"] = _mask_fingerprint(pose_video_mask)
+                log.info("phase gate: using LIVE mask (%d frames) — paint edits kept, freeze updated",
+                         pose_video_mask.shape[0])
+                mask_check_out = out_mask
+                msg = ("PHASE 2 — RENDERING (live mask, your paint edits kept)\n\n"
+                       "Generation uses the current mask on the wire (including edits after analyze).\n"
+                       "Freeze file was updated to this mask.")
+                _progress_text("PHASE 2: live mask — edits kept", unique_id)
+            elif frozen_ok:
+                out_mask = frozen
+                mask_check_out = out_mask
+                msg = ("PHASE 2 — RENDERING (fallback to frozen mask)\n\n"
+                       "No live mask arrived — using freeze from analysis.")
+                _progress_text("PHASE 2: fallback frozen mask", unique_id)
+                log.warning("phase gate: live mask missing on generate — falling back to freeze")
+            else:
+                out_mask = torch.zeros((frames.shape[0], frames.shape[1], frames.shape[2], 3),
+                                       dtype=torch.float32)
+                mask_check_out = out_mask
+                msg = "PHASE 2 — RENDERING\n\nWARNING: no mask available."
+                _progress_text("PHASE 2: NO MASK", unique_id)
+                log.warning("phase gate: no live mask and no freeze")
 
-        from comfy_execution.graph_utils import ExecutionBlocker
-        again = ("Press Run again — rendering starts automatically."
+            state["analyzed_key"] = store
+            _SESSION_ANALYZED_KEYS.add(key)
+            if store:
+                _SESSION_ANALYZED_KEYS.add(store)
+            _save_phase_state(state)
+
+            log.info("phase gate: rendering pass")
+            return (frames, msg, out_mask, mask_check_out)
+
+        # ----- analysis pass -----
+        if pose_video_mask is not None:
+            # Always save what analysis sees. If you painted and re-run phase 1,
+            # that commits the painted mask into the freeze file.
+            _save_frozen_mask(pose_video_mask)
+            state["mask_fp"] = _mask_fingerprint(pose_video_mask)
+            out_mask = pose_video_mask
+            log.info("phase gate: froze pose mask (%d frames) for later use",
+                     pose_video_mask.shape[0])
+        elif frozen_ok:
+            out_mask = frozen
+            if phase.startswith("auto") and not reanalyze:
+                # No live mask but freeze exists — treat as generate only if
+                # this session already analyzed (otherwise fall through to show MASK CHECK)
+                if key in _SESSION_ANALYZED_KEYS:
+                    pass_through = True
+                    store = key
+                    log.info("phase gate: no live mask on analyze; switching to generate with freeze")
+                    state["analyzed_key"] = store
+                    _save_phase_state(state)
+                    msg = ("PHASE 2 — RENDERING (frozen mask)\n\n"
+                           "No live mask on the wire; using freeze.")
+                    _progress_text("PHASE 2: frozen mask", unique_id)
+                    return (frames, msg, out_mask, out_mask)
+            # else: show frozen mask as analysis preview
+        else:
+            out_mask = torch.zeros((frames.shape[0], frames.shape[1], frames.shape[2], 3),
+                                   dtype=torch.float32)
+            log.warning("phase gate: pose_video_mask not wired")
+
+        state["analyzed_key"] = store
+        _SESSION_ANALYZED_KEYS.add(key)
+        if store:
+            _SESSION_ANALYZED_KEYS.add(store)
+        _save_phase_state(state)
+
+        again = ("Press Run again to render. If you paint the mask after this, leave "
+                 "on_generate = 'use live mask' (default) so edits are kept — "
+                 "or set phase to '1' once after painting to re-freeze."
                  if phase.startswith("auto") else
-                 "Set phase to '2 - generate video' (or 'auto') and press Run.")
-        msg = ("PHASE 1 COMPLETE — ANALYSIS ONLY (generation was skipped on purpose)\n\n"
-               "Review, then continue:\n"
-               "  1. MASK CHECK video (group 4): is each person the right color?\n"
-               "  2. REF MASK preview (group 3): full colored silhouette per character?\n"
-               "  3. FOOTAGE ANALYSIS (group 8): copy schedule_template into prompt_schedule, fill actions.\n"
-               "  4. " + again)
-        _progress_text("PHASE 1 done — press Run again to render", unique_id)
-        log.info("phase gate: analysis pass complete - next queue will render")
-        return (ExecutionBlocker(None), msg)
+                 "Set phase to '2' (or 'auto') and press Run. "
+                 "Painted after this? use live mask / or phase 1 again to re-freeze.")
+        msg = ("PHASE 1 COMPLETE — ANALYSIS ONLY\n\n"
+               "Mask from this pass is saved as freeze.\n"
+               "MASK CHECK / Timeline should show the driving mask now.\n\n"
+               "If you PAINT/fix the mask after this:\n"
+               "  • keep on_generate = 'use live mask' (default), OR\n"
+               "  • set phase to '1', Run once more to commit paint into freeze,\n"
+               "    then generate with 'use frozen mask'.\n\n"
+               "Paint node must sit BETWEEN Colored Mask and this Phase Gate.\n"
+               "Painting only on MASK CHECK preview does NOT feed the generator.\n\n"
+               "Next: " + again)
+        _progress_text("PHASE 1 done — paint then Run again (live mask)", unique_id)
+        log.info("phase gate: analysis pass complete")
+        return (ExecutionBlocker(None), msg, out_mask, out_mask)
 
 
 class GAPSCAIL2Planner:
@@ -1248,6 +1610,207 @@ class GAPCharacterTimeline:
         return (timeline, template, n_chars, prompts_template)
 
 
+class GAPRefMaskPaint:
+    """Paint-edit the REF MASK and keep it across Run 2.
+
+    Wire: GAP Multi-Character Reference.reference_image_mask → this →
+    Long Video.reference_image_mask (and Preview).
+
+    After Run 1: open Mask Editor on THIS node (or its preview), paint,
+    Save / «применить на изображении». Run 2 will use the painted image
+    even if upstream SAM3 rebuilds a new automatic mask.
+
+    reset=True discards the paint and takes a fresh upstream mask."""
+
+    CATEGORY = "GAP/SCAIL2"
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("reference_image_mask",)
+    FUNCTION = "hold"
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "reference_image_mask": ("IMAGE", {
+                    "tooltip": "From GAP Multi-Character Reference.reference_image_mask",
+                }),
+                "reset": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "reset paint (use fresh SAM3 mask)",
+                    "label_off": "keep painted mask",
+                    "tooltip": "Turn ON once to throw away your paint and take the new automatic mask.",
+                }),
+                # Mask Editor writes the saved clipspace path into this widget after Save
+                "image": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Filled automatically by Mask Editor after Save — leave as is.",
+                }),
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, reference_image_mask, reset=False, image="", unique_id=None,
+                   prompt=None, extra_pnginfo=None):
+        # MUST include upstream fingerprint — otherwise ComfyUI caches this node and
+        # fresh SAM3_Detect → MultiChar masks never reach Long Video.
+        try:
+            finger = hashlib.sha1(
+                (reference_image_mask[:1, ::16, ::16, :3].detach().float().cpu()
+                 .numpy().tobytes())
+            ).hexdigest()[:12]
+        except Exception:
+            finger = "x"
+        paint = _ref_paint_path()
+        mtime = os.path.getmtime(paint) if os.path.exists(paint) else 0
+        return f"{reset}|{image}|{mtime}|{finger}"
+
+    def hold(self, reference_image_mask, reset=False, image="", unique_id=None,
+             prompt=None, extra_pnginfo=None):
+        state = _load_phase_state()
+        painted_flag = bool(state.get("ref_mask_painted"))
+        last_path = str(state.get("ref_mask_image_path") or "")
+        last_mtime = float(state.get("ref_mask_image_mtime") or 0)
+        image = str(image or "").strip()
+        bg_value = float(reference_image_mask[0, 0, 0, :3].mean().item())
+        out = None
+        from_paint = False
+
+        if reset:
+            state["ref_mask_painted"] = False
+            state["ref_mask_image_path"] = ""
+            state["ref_mask_image_mtime"] = 0
+            _save_phase_state(state)
+            out = reference_image_mask
+            log.info("GAPRefMaskPaint: RESET — using fresh upstream mask %s", tuple(out.shape))
+            _progress_text("REF MASK: reset to automatic", unique_id)
+        else:
+            # Reload Mask Editor file when path is new OR file was overwritten.
+            img_mtime = _clipspace_mtime(image) if image else 0.0
+            editor_dirty = bool(
+                image and (image != last_path or img_mtime > last_mtime + 0.05)
+            )
+            if editor_dirty:
+                painted = _load_image_path(image)
+                if painted is not None:
+                    out = painted
+                    from_paint = True
+                    state["ref_mask_painted"] = True
+                    state["ref_mask_image_path"] = image
+                    state["ref_mask_image_mtime"] = img_mtime
+                    _save_phase_state(state)
+                    log.info("GAPRefMaskPaint: loaded Mask Editor image %s", tuple(out.shape))
+                    _progress_text("REF MASK: from Mask Editor", unique_id)
+
+            # Sticky paint: once saved, keep it across MultiChar re-runs until reset.
+            if out is None and painted_flag:
+                held = _load_ref_paint()
+                if held is not None:
+                    out = held
+                    from_paint = True
+                    log.info("GAPRefMaskPaint: keeping painted mask %s", tuple(out.shape))
+                    _progress_text("REF MASK: kept your paint", unique_id)
+                else:
+                    state["ref_mask_painted"] = False
+                    _save_phase_state(state)
+                    log.warning("GAPRefMaskPaint: paint file missing — fell back to upstream")
+
+            if out is None:
+                out = reference_image_mask
+                log.info("GAPRefMaskPaint: automatic upstream mask %s", tuple(out.shape))
+                _progress_text("REF MASK: automatic — paint on THIS node", unique_id)
+
+        # Always fit into MultiChar canvas; never drop paint for aspect mismatch.
+        fitted = _fit_colored_mask(out[:1], reference_image_mask[:1], bg_value)
+        n = reference_image_mask.shape[0]
+        out = fitted.repeat(n, 1, 1, 1) if n > 1 else fitted
+
+        if from_paint:
+            state["ref_mask_painted"] = True
+            _save_phase_state(state)
+        _save_ref_paint(out)
+
+        ui_images = None
+        try:
+            preview = nodes.PreviewImage()
+            ui_images = preview.save_images(
+                out[: min(4, out.shape[0])].cpu(),
+                filename_prefix="gap_ref_mask_paint",
+                prompt=prompt,
+                extra_pnginfo=extra_pnginfo,
+            )
+        except Exception as e:
+            log.warning("GAPRefMaskPaint preview failed: %s", e)
+
+        if ui_images is not None:
+            return {"ui": ui_images.get("ui", ui_images), "result": (out,)}
+        return (out,)
+
+
+def _ref_paint_path():
+    return os.path.join(_cache_dir("_phase_state"), "ref_mask_paint.pt")
+
+
+def _save_ref_paint(mask):
+    path = _ref_paint_path()
+    tmp = path + ".tmp"
+    torch.save(mask.detach().half().contiguous().cpu(), tmp)
+    os.replace(tmp, path)
+
+
+def _load_ref_paint():
+    path = _ref_paint_path()
+    if not os.path.exists(path):
+        return None
+    try:
+        return torch.load(path, map_location="cpu", weights_only=True).float()
+    except Exception as e:
+        log.warning("unreadable painted ref mask (%s)", e)
+        return None
+
+
+def _load_image_path(path_str):
+    """Load an image written by ComfyUI Mask Editor / clipspace Save."""
+    if not path_str or not str(path_str).strip():
+        return None
+    import folder_paths
+    from PIL import Image, ImageOps
+    import numpy as np
+
+    raw = str(path_str).replace(" [input]", "").replace("[input]", "").strip()
+    candidates = [raw]
+    try:
+        input_dir = folder_paths.get_input_directory()
+        candidates.extend([
+            os.path.join(input_dir, raw),
+            os.path.join(input_dir, "clipspace", os.path.basename(raw)),
+            os.path.join(folder_paths.get_temp_directory(), os.path.basename(raw)),
+            os.path.join(folder_paths.get_temp_directory(), "clipspace", os.path.basename(raw)),
+        ])
+    except Exception:
+        pass
+
+    for p in candidates:
+        if not p or not os.path.isfile(p):
+            continue
+        try:
+            i = Image.open(p)
+            i = ImageOps.exif_transpose(i)
+            # Prefer RGB; if RGBA, keep RGB channels (paint applied on image)
+            rgb = i.convert("RGB")
+            arr = np.array(rgb).astype("float32") / 255.0
+            return torch.from_numpy(arr)[None,]
+        except Exception as e:
+            log.warning("GAPRefMaskPaint: failed to load %s (%s)", p, e)
+    return None
+
+
 NODE_CLASS_MAPPINGS = {
     "GAPSCAIL2LongVideo": GAPSCAIL2LongVideo,
     "GAPMultiCharacterReference": GAPMultiCharacterReference,
@@ -1255,6 +1818,7 @@ NODE_CLASS_MAPPINGS = {
     "GAPSCAIL2Planner": GAPSCAIL2Planner,
     "GAPCharacterTimeline": GAPCharacterTimeline,
     "GAPPhaseGate": GAPPhaseGate,
+    "GAPRefMaskPaint": GAPRefMaskPaint,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1264,4 +1828,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GAPSCAIL2Planner": "GAP SCAIL-2 Chunk Planner",
     "GAPCharacterTimeline": "GAP Character Timeline (footage analysis)",
     "GAPPhaseGate": "GAP Phase Gate (1=analyze / 2=generate)",
+    "GAPRefMaskPaint": "GAP REF Mask Paint (edit & keep)",
 }
