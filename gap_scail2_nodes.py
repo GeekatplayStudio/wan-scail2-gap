@@ -1049,12 +1049,10 @@ def _letterbox(img_bchw, width, height, bg_value, method="bicubic"):
 def _fit_colored_mask(img, target, bg_value=0.0):
     """Fit a painted/held colored mask to target BHWC size.
 
-    Uses the same letterbox policy as GAP Multi-Character Reference — never
-    stretch. WanSCAILToVideo itself center-crops refs/masks to width×height, but
-    MultiChar already emits exact H×W so that step is a no-op when sizes match.
-
-    Also fixes a Mask Editor footgun: H/W swapped vs upstream (portrait↔landscape)
-    used to be stretched into the target and look horizontally crushed.
+    Same letterbox policy as GAP Multi-Character Reference — never stretch and
+    never permute H↔W (permute is a 90° rotate and lays the character on its
+    side). If the painted clip is a different aspect than MultiChar, letterbox
+    into the upstream canvas; user should reset+repaint if the aspect was wrong.
     """
     if img is None:
         return target
@@ -1065,19 +1063,18 @@ def _fit_colored_mask(img, target, bg_value=0.0):
     if (h, w) == (th, tw):
         return out
 
-    # Transposed relative to target (e.g. 896×512 vs 512×896)
     if (h, w) == (tw, th):
-        out = out.permute(0, 2, 1, 3).contiguous()
         log.warning(
-            "GAPRefMaskPaint: transposed mask %d×%d → %d×%d (H×W) to match upstream",
+            "GAPRefMaskPaint: painted mask is %d×%d but upstream is %d×%d (H×W) — "
+            "letterboxing without rotate. Toggle reset paint and re-paint on the "
+            "current MultiChar aspect (check WIDTH/HEIGHT).",
             h, w, th, tw,
         )
-        return out
-
-    log.info(
-        "GAPRefMaskPaint: letterboxing painted mask %d×%d → %d×%d (H×W)",
-        h, w, th, tw,
-    )
+    else:
+        log.info(
+            "GAPRefMaskPaint: letterboxing painted mask %d×%d → %d×%d (H×W)",
+            h, w, th, tw,
+        )
     return _letterbox(
         out.movedim(-1, 1), tw, th, bg_value, "nearest-exact"
     ).movedim(1, -1)
