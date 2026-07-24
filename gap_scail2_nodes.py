@@ -1483,6 +1483,185 @@ class GAPCharacterTimeline:
         return (timeline, template, n_chars, prompts_template)
 
 
+class GAPRefMaskPaint:
+    """Paint-edit the REF MASK and keep it across Run 2.
+
+    Wire: GAP Multi-Character Reference.reference_image_mask → this →
+    Long Video.reference_image_mask (and Preview).
+
+    After Run 1: open Mask Editor on THIS node (or its preview), paint,
+    Save / «применить на изображении». Run 2 will use the painted image
+    even if upstream SAM3 rebuilds a new automatic mask.
+
+    reset=True discards the paint and takes a fresh upstream mask."""
+
+    CATEGORY = "GAP/SCAIL2"
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("reference_image_mask",)
+    FUNCTION = "hold"
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "reference_image_mask": ("IMAGE", {
+                    "tooltip": "From GAP Multi-Character Reference.reference_image_mask",
+                }),
+                "reset": ("BOOLEAN", {
+                    "default": False,
+                    "label_on": "reset paint (use fresh SAM3 mask)",
+                    "label_off": "keep painted mask",
+                    "tooltip": "Turn ON once to throw away your paint and take the new automatic mask.",
+                }),
+                # Mask Editor writes the saved clipspace path into this widget after Save
+                "image": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Filled automatically by Mask Editor after Save — leave as is.",
+                }),
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
+        }
+
+    @classmethod
+    def IS_CHANGED(cls, reference_image_mask, reset=False, image="", unique_id=None,
+                   prompt=None, extra_pnginfo=None):
+        paint = _ref_paint_path()
+        mtime = os.path.getmtime(paint) if os.path.exists(paint) else 0
+        return f"{reset}|{image}|{mtime}"
+
+    def hold(self, reference_image_mask, reset=False, image="", unique_id=None,
+             prompt=None, extra_pnginfo=None):
+        state = _load_phase_state()
+        painted_flag = bool(state.get("ref_mask_painted"))
+
+        if reset:
+            state["ref_mask_painted"] = False
+            _save_phase_state(state)
+            out = reference_image_mask
+            _save_ref_paint(out)
+            log.info("GAPRefMaskPaint: RESET — using fresh upstream mask %s", tuple(out.shape))
+            _progress_text("REF MASK: reset to automatic", unique_id)
+        else:
+            painted = _load_image_path(image)
+            if painted is not None:
+                out = painted
+                state["ref_mask_painted"] = True
+                _save_phase_state(state)
+                _save_ref_paint(out)
+                log.info("GAPRefMaskPaint: loaded Mask Editor image %s", tuple(out.shape))
+                _progress_text("REF MASK: from Mask Editor", unique_id)
+            elif painted_flag:
+                held = _load_ref_paint()
+                if held is not None:
+                    out = held
+                    log.info("GAPRefMaskPaint: keeping painted mask %s", tuple(out.shape))
+                    _progress_text("REF MASK: kept your paint", unique_id)
+                else:
+                    out = reference_image_mask
+                    state["ref_mask_painted"] = False
+                    _save_phase_state(state)
+                    _save_ref_paint(out)
+                    log.warning("GAPRefMaskPaint: paint file missing — fell back to upstream")
+                    _progress_text("REF MASK: automatic (paint file missing)", unique_id)
+            else:
+                out = reference_image_mask
+                _save_ref_paint(out)
+                log.info("GAPRefMaskPaint: automatic upstream mask %s", tuple(out.shape))
+                _progress_text("REF MASK: automatic — paint on THIS node", unique_id)
+
+        # Match spatial size to upstream (generator expects same H×W)
+        th, tw = reference_image_mask.shape[1], reference_image_mask.shape[2]
+        if out.shape[1] != th or out.shape[2] != tw:
+            out = comfy.utils.common_upscale(
+                out.movedim(-1, 1), tw, th, "nearest-exact", "disabled"
+            ).movedim(1, -1)
+        n = reference_image_mask.shape[0]
+        if out.shape[0] == 1 and n > 1:
+            out = out.repeat(n, 1, 1, 1)
+        elif out.shape[0] > n:
+            out = out[:n]
+
+        ui_images = None
+        try:
+            preview = nodes.PreviewImage()
+            ui_images = preview.save_images(
+                out[: min(4, out.shape[0])].cpu(),
+                filename_prefix="gap_ref_mask_paint",
+                prompt=prompt,
+                extra_pnginfo=extra_pnginfo,
+            )
+        except Exception as e:
+            log.warning("GAPRefMaskPaint preview failed: %s", e)
+
+        if ui_images is not None:
+            return {"ui": ui_images.get("ui", ui_images), "result": (out,)}
+        return (out,)
+
+
+def _ref_paint_path():
+    return os.path.join(_cache_dir("_phase_state"), "ref_mask_paint.pt")
+
+
+def _save_ref_paint(mask):
+    path = _ref_paint_path()
+    tmp = path + ".tmp"
+    torch.save(mask.detach().half().contiguous().cpu(), tmp)
+    os.replace(tmp, path)
+
+
+def _load_ref_paint():
+    path = _ref_paint_path()
+    if not os.path.exists(path):
+        return None
+    try:
+        return torch.load(path, map_location="cpu", weights_only=True).float()
+    except Exception as e:
+        log.warning("unreadable painted ref mask (%s)", e)
+        return None
+
+
+def _load_image_path(path_str):
+    """Load an image written by ComfyUI Mask Editor / clipspace Save."""
+    if not path_str or not str(path_str).strip():
+        return None
+    import folder_paths
+    from PIL import Image, ImageOps
+    import numpy as np
+
+    raw = str(path_str).replace(" [input]", "").replace("[input]", "").strip()
+    candidates = [raw]
+    try:
+        input_dir = folder_paths.get_input_directory()
+        candidates.extend([
+            os.path.join(input_dir, raw),
+            os.path.join(input_dir, "clipspace", os.path.basename(raw)),
+            os.path.join(folder_paths.get_temp_directory(), os.path.basename(raw)),
+            os.path.join(folder_paths.get_temp_directory(), "clipspace", os.path.basename(raw)),
+        ])
+    except Exception:
+        pass
+
+    for p in candidates:
+        if not p or not os.path.isfile(p):
+            continue
+        try:
+            i = Image.open(p)
+            i = ImageOps.exif_transpose(i)
+            # Prefer RGB; if RGBA, keep RGB channels (paint applied on image)
+            rgb = i.convert("RGB")
+            arr = np.array(rgb).astype("float32") / 255.0
+            return torch.from_numpy(arr)[None,]
+        except Exception as e:
+            log.warning("GAPRefMaskPaint: failed to load %s (%s)", p, e)
+    return None
+
+
 NODE_CLASS_MAPPINGS = {
     "GAPSCAIL2LongVideo": GAPSCAIL2LongVideo,
     "GAPMultiCharacterReference": GAPMultiCharacterReference,
@@ -1490,6 +1669,7 @@ NODE_CLASS_MAPPINGS = {
     "GAPSCAIL2Planner": GAPSCAIL2Planner,
     "GAPCharacterTimeline": GAPCharacterTimeline,
     "GAPPhaseGate": GAPPhaseGate,
+    "GAPRefMaskPaint": GAPRefMaskPaint,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1499,4 +1679,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GAPSCAIL2Planner": "GAP SCAIL-2 Chunk Planner",
     "GAPCharacterTimeline": "GAP Character Timeline (footage analysis)",
     "GAPPhaseGate": "GAP Phase Gate (1=analyze / 2=generate)",
+    "GAPRefMaskPaint": "GAP REF Mask Paint (edit & keep)",
 }
