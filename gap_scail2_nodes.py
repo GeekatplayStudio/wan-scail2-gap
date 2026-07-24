@@ -1214,15 +1214,17 @@ class GAPPhaseGate:
     output tells the user what just happened and what to do next — wire it to
     a Preview Any node.
 
-    Wire `pose_video_mask` (from SCAIL2ColoredMask) into this node and use the
-    `pose_video_mask` OUTPUT for Long Video / Timeline / Mask Check. On the
-    analysis pass the mask is frozen to disk; on generate the frozen mask is
-    reused so SAM3 re-tracking cannot reshuffle identity colors (and with
-    ComfyUI lazy inputs, tracking itself can be skipped on Run 2)."""
+    Wire `pose_video_mask` (from SCAIL2ColoredMask) into this node:
+      - `pose_video_mask` OUT → Long Video (always the frozen tensor on Run 2)
+      - `mask_check` OUT → Timeline / ImageBlend / Save MASK CHECK
+        (ExecutionBlocker on generate — those nodes do not re-run on Run 2)
+
+    On analysis the mask is frozen to disk; on generate SAM3 is skipped via
+    lazy inputs and MASK CHECK is not rewritten."""
 
     CATEGORY = "GAP/SCAIL2"
-    RETURN_TYPES = ("IMAGE", "STRING", "IMAGE")
-    RETURN_NAMES = ("frames", "next_step", "pose_video_mask")
+    RETURN_TYPES = ("IMAGE", "STRING", "IMAGE", "IMAGE")
+    RETURN_NAMES = ("frames", "next_step", "pose_video_mask", "mask_check")
     FUNCTION = "gate"
 
     @classmethod
@@ -1237,7 +1239,7 @@ class GAPPhaseGate:
             "optional": {
                 "pose_video_mask": ("IMAGE", {
                     "lazy": True,
-                    "tooltip": "Wire from SCAIL2ColoredMask, then use THIS node's pose_video_mask output for Long Video / Timeline / Mask Check. Freezes the reviewed mask between analyze and generate so identity colors cannot reshuffle.",
+                    "tooltip": "Wire from SCAIL2ColoredMask. Use pose_video_mask OUT for Long Video; use mask_check OUT for Timeline / MASK CHECK preview (blocked on generate).",
                 }),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
@@ -1264,6 +1266,8 @@ class GAPPhaseGate:
         return ["pose_video_mask"]
 
     def gate(self, frames, phase, pose_video_mask=None, unique_id=None):
+        from comfy_execution.graph_utils import ExecutionBlocker
+
         key = _video_content_key(frames)
         state = _load_phase_state()
         stored_key = state.get("analyzed_key")
@@ -1282,7 +1286,8 @@ class GAPPhaseGate:
             # object IDs when it re-tracks on the generate queue.
             if frozen_ok:
                 out_mask = frozen
-                log.info("phase gate: using frozen pose mask (%d frames)", frozen.shape[0])
+                log.info("phase gate: using frozen pose mask (%d frames) — SAM3 tracking SKIPPED",
+                         frozen.shape[0])
             elif out_mask is None:
                 out_mask = torch.zeros((frames.shape[0], frames.shape[1], frames.shape[2], 3),
                                        dtype=torch.float32)
@@ -1313,7 +1318,8 @@ class GAPPhaseGate:
                     # Key drifted but freeze is good → flip to generate this queue
                     pass_through = True
                     store = key
-                    log.info("phase gate: kept frozen mask despite key drift - generating")
+                    log.info("phase gate: kept frozen mask despite key drift - generating "
+                             "(SAM3 SKIPPED)")
             elif frozen_ok:
                 out_mask = frozen
                 if phase.startswith("auto"):
@@ -1331,17 +1337,15 @@ class GAPPhaseGate:
             _save_phase_state(state)
 
         if pass_through:
-            msg = ("PHASE 2 — RENDERING\n\n"
-                   "Generation is running — watch the progress text on the generator node\n"
-                   "and the console for the chunk plan. The finished video lands in OUTPUT.\n\n"
-                   "Using the FROZEN pose mask from the analysis pass (identity colors locked).\n"
-                   "Changed object_indices / re-tracked? Set phase to '1 - analyze only' once\n"
-                   "to refresh the freeze, then generate again.")
-            _progress_text("PHASE 2: rendering (mask frozen)", unique_id)
+            msg = ("PHASE 2 — RENDERING (frozen mask, SAM3 skipped)\n\n"
+                   "Generation is running with the mask locked at analysis.\n"
+                   "MASK CHECK / Timeline are intentionally NOT re-run.\n"
+                   "Changed object_indices? Set phase to '1 - analyze only' once, then generate.")
+            _progress_text("PHASE 2: frozen mask — SAM3 skipped", unique_id)
             log.info("phase gate: rendering pass")
-            return (frames, msg, out_mask)
+            # Block MASK CHECK / Timeline so Run 2 does not look like remasking
+            return (frames, msg, out_mask, ExecutionBlocker(None))
 
-        from comfy_execution.graph_utils import ExecutionBlocker
         again = ("Press Run again — rendering starts automatically with this mask frozen."
                  if phase.startswith("auto") else
                  "Set phase to '2 - generate video' (or 'auto') and press Run.")
@@ -1355,7 +1359,7 @@ class GAPPhaseGate:
                "  5. " + again)
         _progress_text("PHASE 1 done — mask frozen; press Run again to render", unique_id)
         log.info("phase gate: analysis pass complete - next queue will render with frozen mask")
-        return (ExecutionBlocker(None), msg, out_mask)
+        return (ExecutionBlocker(None), msg, out_mask, out_mask)
 
 
 class GAPSCAIL2Planner:

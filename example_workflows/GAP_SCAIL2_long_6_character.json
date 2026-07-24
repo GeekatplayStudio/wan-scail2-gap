@@ -2527,8 +2527,8 @@
         140
       ],
       "size": [
-        520,
-        160
+        560,
+        180
       ],
       "flags": {},
       "order": 40,
@@ -2565,13 +2565,19 @@
           "name": "pose_video_mask",
           "type": "IMAGE",
           "links": [
-            86,
+            86
+          ]
+        },
+        {
+          "name": "mask_check",
+          "type": "IMAGE",
+          "links": [
             87,
             88
           ]
         }
       ],
-      "title": "PHASE GATE — freeze mask on analyze, render on Run 2",
+      "title": "PHASE GATE — freeze mask; mask_check only on analyze",
       "properties": {
         "aux_id": "GeekatplayStudio/wan-scail2-gap",
         "ver": "74f351334bf7076fa1a4e55946130ae5aed20b1e",
@@ -3399,7 +3405,7 @@
     [
       87,
       42,
-      2,
+      3,
       29,
       0,
       "IMAGE"
@@ -3407,7 +3413,7 @@
     [
       88,
       42,
-      2,
+      3,
       32,
       1,
       "IMAGE"

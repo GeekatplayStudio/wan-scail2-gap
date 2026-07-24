@@ -1791,8 +1791,8 @@
         140
       ],
       "size": [
-        520,
-        160
+        560,
+        180
       ],
       "flags": {},
       "order": 50,
@@ -1829,13 +1829,19 @@
           "name": "pose_video_mask",
           "type": "IMAGE",
           "links": [
-            59,
+            59
+          ]
+        },
+        {
+          "name": "mask_check",
+          "type": "IMAGE",
+          "links": [
             60,
             61
           ]
         }
       ],
-      "title": "PHASE GATE — freeze mask on analyze, render on Run 2",
+      "title": "PHASE GATE — freeze mask; mask_check only on analyze",
       "properties": {
         "Node name for S&R": "GAPPhaseGate"
       },
@@ -2461,7 +2467,7 @@
     [
       60,
       42,
-      2,
+      3,
       29,
       0,
       "IMAGE"
@@ -2469,7 +2475,7 @@
     [
       61,
       42,
-      2,
+      3,
       32,
       1,
       "IMAGE"
