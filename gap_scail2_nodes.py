@@ -1049,39 +1049,54 @@ def _letterbox(img_bchw, width, height, bg_value, method="bicubic"):
 def _fit_colored_mask(img, target, bg_value=0.0):
     """Fit a painted/held colored mask to target BHWC size.
 
-    Same aspect → WanSCAIL-style center resize (fills the frame, no stretch
-    squash). Different aspect (e.g. old 896×512 clipspace vs 512×896 MultiChar)
-    → return None so the caller falls back to upstream; letterboxing the whole
-    foreign canvas would leave a useless tiny blob in the middle.
-    Never permute H↔W (that is a 90° rotate).
+    Always keeps the paint: WanSCAIL-style center resize into upstream H×W.
+    Never returns None and never permutes (permute = 90° rotate).
     """
     if img is None:
         return target
     th, tw = int(target.shape[1]), int(target.shape[2])
     out = img[..., :3].float()
     h, w = int(out.shape[1]), int(out.shape[2])
-
     if (h, w) == (th, tw):
         return out
-
-    src_aspect = w / max(h, 1)
-    tgt_aspect = tw / max(th, 1)
-    if abs(src_aspect - tgt_aspect) > 0.05:
+    if abs((w / max(h, 1)) - (tw / max(th, 1))) > 0.05:
         log.warning(
-            "GAPRefMaskPaint: painted %d×%d aspect != upstream %d×%d — "
-            "ignoring paint (letterbox would make a tiny blob). "
-            "Toggle reset paint, then re-paint on the current REF mask.",
+            "GAPRefMaskPaint: painted %d×%d → upstream %d×%d (H×W) via center-crop "
+            "(aspect differed; paint is kept)",
             h, w, th, tw,
         )
-        return None
-
-    log.info(
-        "GAPRefMaskPaint: center-resizing painted mask %d×%d → %d×%d (H×W)",
-        h, w, th, tw,
-    )
+    else:
+        log.info(
+            "GAPRefMaskPaint: center-resizing painted mask %d×%d → %d×%d (H×W)",
+            h, w, th, tw,
+        )
     return comfy.utils.common_upscale(
         out.movedim(-1, 1), tw, th, "nearest-exact", "center"
     ).movedim(1, -1)
+
+
+def _clipspace_mtime(path_str):
+    """Best-effort mtime of a Mask Editor / clipspace path."""
+    if not path_str or not str(path_str).strip():
+        return 0.0
+    raw = str(path_str).replace(" [input]", "").replace("[input]", "").strip()
+    candidates = [raw]
+    try:
+        import folder_paths
+        input_dir = folder_paths.get_input_directory()
+        candidates.extend([
+            os.path.join(input_dir, raw),
+            os.path.join(input_dir, "clipspace", os.path.basename(raw)),
+        ])
+    except Exception:
+        pass
+    for p in candidates:
+        try:
+            if p and os.path.isfile(p):
+                return float(os.path.getmtime(p))
+        except Exception:
+            pass
+    return 0.0
 
 
 def _prep_ref(image, mask, width, height, color_idx, bg_value, device):
@@ -1627,45 +1642,44 @@ class GAPRefMaskPaint:
         state = _load_phase_state()
         painted_flag = bool(state.get("ref_mask_painted"))
         last_path = str(state.get("ref_mask_image_path") or "")
+        last_mtime = float(state.get("ref_mask_image_mtime") or 0)
         image = str(image or "").strip()
         bg_value = float(reference_image_mask[0, 0, 0, :3].mean().item())
         out = None
+        from_paint = False
 
         if reset:
             state["ref_mask_painted"] = False
             state["ref_mask_image_path"] = ""
+            state["ref_mask_image_mtime"] = 0
             _save_phase_state(state)
             out = reference_image_mask
             log.info("GAPRefMaskPaint: RESET — using fresh upstream mask %s", tuple(out.shape))
             _progress_text("REF MASK: reset to automatic", unique_id)
         else:
-            # Only adopt Mask Editor output when the widget path is NEW.
-            # A sticky clipspace path must NOT override MultiChar every Run.
-            if image and image != last_path:
+            # Reload Mask Editor file when path is new OR file was overwritten.
+            img_mtime = _clipspace_mtime(image) if image else 0.0
+            editor_dirty = bool(
+                image and (image != last_path or img_mtime > last_mtime + 0.05)
+            )
+            if editor_dirty:
                 painted = _load_image_path(image)
                 if painted is not None:
-                    trial = _fit_colored_mask(painted[:1], reference_image_mask[:1], bg_value)
+                    out = painted
+                    from_paint = True
+                    state["ref_mask_painted"] = True
                     state["ref_mask_image_path"] = image
-                    if trial is None:
-                        state["ref_mask_painted"] = False
-                        _save_phase_state(state)
-                        out = reference_image_mask
-                        _progress_text(
-                            "REF MASK: automatic (paint aspect mismatch — re-paint)",
-                            unique_id,
-                        )
-                    else:
-                        state["ref_mask_painted"] = True
-                        _save_phase_state(state)
-                        out = painted
-                        log.info("GAPRefMaskPaint: loaded NEW Mask Editor image %s",
-                                 tuple(out.shape))
-                        _progress_text("REF MASK: from Mask Editor", unique_id)
+                    state["ref_mask_image_mtime"] = img_mtime
+                    _save_phase_state(state)
+                    log.info("GAPRefMaskPaint: loaded Mask Editor image %s", tuple(out.shape))
+                    _progress_text("REF MASK: from Mask Editor", unique_id)
 
+            # Sticky paint: once saved, keep it across MultiChar re-runs until reset.
             if out is None and painted_flag:
                 held = _load_ref_paint()
                 if held is not None:
                     out = held
+                    from_paint = True
                     log.info("GAPRefMaskPaint: keeping painted mask %s", tuple(out.shape))
                     _progress_text("REF MASK: kept your paint", unique_id)
                 else:
@@ -1678,15 +1692,14 @@ class GAPRefMaskPaint:
                 log.info("GAPRefMaskPaint: automatic upstream mask %s", tuple(out.shape))
                 _progress_text("REF MASK: automatic — paint on THIS node", unique_id)
 
+        # Always fit into MultiChar canvas; never drop paint for aspect mismatch.
         fitted = _fit_colored_mask(out[:1], reference_image_mask[:1], bg_value)
-        if fitted is None:
-            out = reference_image_mask
-            state["ref_mask_painted"] = False
+        n = reference_image_mask.shape[0]
+        out = fitted.repeat(n, 1, 1, 1) if n > 1 else fitted
+
+        if from_paint:
+            state["ref_mask_painted"] = True
             _save_phase_state(state)
-            _progress_text("REF MASK: automatic (paint aspect mismatch — re-paint)", unique_id)
-        else:
-            n = reference_image_mask.shape[0]
-            out = fitted.repeat(n, 1, 1, 1) if n > 1 else fitted
         _save_ref_paint(out)
 
         ui_images = None
