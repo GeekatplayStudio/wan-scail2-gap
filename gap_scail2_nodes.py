@@ -803,6 +803,31 @@ class GAPSCAIL2LongVideo:
             raise ValueError(f"overlap ({overlap}) must be smaller than chunk_length ({chunk_length})")
 
         total_frames = pose_video.shape[0]
+        ph, pw = int(pose_video.shape[1]), int(pose_video.shape[2])
+        if (ph, pw) != (height, width):
+            log.warning(
+                "pose_video is %d×%d (H×W) but width×height is %d×%d — "
+                "WanSCAILToVideo will center-crop/stretch (not letterbox). "
+                "If Resize Image/Mask has WIDTH/HEIGHT linked via DynamicCombo and "
+                "the driving clip stayed at native size, unlink and set width/height "
+                "on the Resize node itself.",
+                ph, pw, height, width,
+            )
+        if pose_video_mask is not None:
+            mh, mw = int(pose_video_mask.shape[1]), int(pose_video_mask.shape[2])
+            if (mh, mw) != (ph, pw):
+                log.warning(
+                    "pose_video_mask %d×%d != pose_video %d×%d (H×W) — masks may misalign",
+                    mh, mw, ph, pw,
+                )
+        if reference_image is not None:
+            rh, rw = int(reference_image.shape[1]), int(reference_image.shape[2])
+            if (rh, rw) != (height, width):
+                log.warning(
+                    "reference_image is %d×%d (H×W) vs gen %d×%d — "
+                    "MultiChar should already letterbox to width×height",
+                    rh, rw, height, width,
+                )
         cuts = _detect_cuts(pose_video, scene_cut_threshold) if detect_scene_cuts else []
         if cuts:
             log.info("scene cuts detected at frames: %s", cuts)
@@ -1019,6 +1044,43 @@ def _letterbox(img_bchw, width, height, bg_value, method="bicubic"):
     y0, x0 = (height - nh) // 2, (width - nw) // 2
     canvas[:, :, y0:y0 + nh, x0:x0 + nw] = resized
     return canvas
+
+
+def _fit_colored_mask(img, target, bg_value=0.0):
+    """Fit a painted/held colored mask to target BHWC size.
+
+    Uses the same letterbox policy as GAP Multi-Character Reference — never
+    stretch. WanSCAILToVideo itself center-crops refs/masks to width×height, but
+    MultiChar already emits exact H×W so that step is a no-op when sizes match.
+
+    Also fixes a Mask Editor footgun: H/W swapped vs upstream (portrait↔landscape)
+    used to be stretched into the target and look horizontally crushed.
+    """
+    if img is None:
+        return target
+    th, tw = int(target.shape[1]), int(target.shape[2])
+    out = img[..., :3].float()
+    h, w = int(out.shape[1]), int(out.shape[2])
+
+    if (h, w) == (th, tw):
+        return out
+
+    # Transposed relative to target (e.g. 896×512 vs 512×896)
+    if (h, w) == (tw, th):
+        out = out.permute(0, 2, 1, 3).contiguous()
+        log.warning(
+            "GAPRefMaskPaint: transposed mask %d×%d → %d×%d (H×W) to match upstream",
+            h, w, th, tw,
+        )
+        return out
+
+    log.info(
+        "GAPRefMaskPaint: letterboxing painted mask %d×%d → %d×%d (H×W)",
+        h, w, th, tw,
+    )
+    return _letterbox(
+        out.movedim(-1, 1), tw, th, bg_value, "nearest-exact"
+    ).movedim(1, -1)
 
 
 def _prep_ref(image, mask, width, height, color_idx, bg_value, device):
@@ -1539,12 +1601,13 @@ class GAPRefMaskPaint:
              prompt=None, extra_pnginfo=None):
         state = _load_phase_state()
         painted_flag = bool(state.get("ref_mask_painted"))
+        # Colored-mask background is uniform in corners (MultiChar letterbox pad)
+        bg_value = float(reference_image_mask[0, 0, 0, :3].mean().item())
 
         if reset:
             state["ref_mask_painted"] = False
             _save_phase_state(state)
             out = reference_image_mask
-            _save_ref_paint(out)
             log.info("GAPRefMaskPaint: RESET — using fresh upstream mask %s", tuple(out.shape))
             _progress_text("REF MASK: reset to automatic", unique_id)
         else:
@@ -1553,7 +1616,6 @@ class GAPRefMaskPaint:
                 out = painted
                 state["ref_mask_painted"] = True
                 _save_phase_state(state)
-                _save_ref_paint(out)
                 log.info("GAPRefMaskPaint: loaded Mask Editor image %s", tuple(out.shape))
                 _progress_text("REF MASK: from Mask Editor", unique_id)
             elif painted_flag:
@@ -1566,26 +1628,20 @@ class GAPRefMaskPaint:
                     out = reference_image_mask
                     state["ref_mask_painted"] = False
                     _save_phase_state(state)
-                    _save_ref_paint(out)
                     log.warning("GAPRefMaskPaint: paint file missing — fell back to upstream")
                     _progress_text("REF MASK: automatic (paint file missing)", unique_id)
             else:
                 out = reference_image_mask
-                _save_ref_paint(out)
                 log.info("GAPRefMaskPaint: automatic upstream mask %s", tuple(out.shape))
                 _progress_text("REF MASK: automatic — paint on THIS node", unique_id)
 
-        # Match spatial size to upstream (generator expects same H×W)
-        th, tw = reference_image_mask.shape[1], reference_image_mask.shape[2]
-        if out.shape[1] != th or out.shape[2] != tw:
-            out = comfy.utils.common_upscale(
-                out.movedim(-1, 1), tw, th, "nearest-exact", "disabled"
-            ).movedim(1, -1)
+        # Same geometry policy as MultiChar (_letterbox) — never stretch.
+        # Stretch ("disabled") was crushing letterboxed refs when H/W differed
+        # (Mask Editor / wrong-orientation temps → skinny silhouette).
+        fitted = _fit_colored_mask(out[:1], reference_image_mask[:1], bg_value)
         n = reference_image_mask.shape[0]
-        if out.shape[0] == 1 and n > 1:
-            out = out.repeat(n, 1, 1, 1)
-        elif out.shape[0] > n:
-            out = out[:n]
+        out = fitted.repeat(n, 1, 1, 1) if n > 1 else fitted
+        _save_ref_paint(out)
 
         ui_images = None
         try:

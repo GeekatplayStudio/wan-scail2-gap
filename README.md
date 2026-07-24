@@ -87,6 +87,9 @@ analyze/generate slider.
 - Changed `object_indices` or re-tracked people? Set phase to **`1 - analyze only`**, Run
   once to refresh the freeze, then generate.
 - On generate, ComfyUI lazy inputs can skip SAM3 entirely when a freeze is on disk.
+- **REF MASK PAINT** (v1.4.5): keeps Mask Editor edits across Run 2 and fits them with the
+  same **letterbox** policy as Multi-Character Reference (never stretch). Paint on that
+  node, not on a mirror Preview.
 
 ## Nodes
 
