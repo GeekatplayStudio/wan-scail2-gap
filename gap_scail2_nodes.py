@@ -585,20 +585,31 @@ def _video_content_key(frames):
 
 
 def _same_driving_clip(stored_key, key):
-    """True when keys refer to the same clip (exact match, or same geometry
-    with means within tolerance — guards residual fingerprint jitter)."""
+    """True when keys refer to the same clip.
+
+    Requires matching geometry + spatial digest. Mean values may drift slightly
+    from re-decode; digest (uint8 8×8) must match so a different video of the
+    same length/resolution cannot skip analyze.
+    """
     if not stored_key or not key:
         return False
     if stored_key == key:
         return True
     try:
-        s_shape, s0, s1, s2, _ = stored_key.split("|", 4)
-        k_shape, k0, k1, k2, _ = key.split("|", 4)
+        s_parts = stored_key.split("|")
+        k_parts = key.split("|")
+        if len(s_parts) != 5 or len(k_parts) != 5:
+            return False
+        if s_parts[0] != k_parts[0]:
+            return False
+        if s_parts[4] != k_parts[4]:
+            return False
+        return all(
+            abs(float(s_parts[i]) - float(k_parts[i])) <= 0.05
+            for i in (1, 2, 3)
+        )
     except ValueError:
         return False
-    if s_shape != k_shape:
-        return False
-    return all(abs(float(a) - float(b)) <= 0.05 for a, b in ((s0, k0), (s1, k1), (s2, k2)))
 
 
 def _phase_state_paths():
@@ -1270,16 +1281,27 @@ class GAPCharacterExtraView:
         )
 
 
-def _phase_decision(phase, key, stored_key):
-    """Returns (pass_through, key_to_store). 'auto' blocks the first time it
-    sees a video (analysis pass) and passes on every following queue."""
+# Keys already analyzed in THIS ComfyUI process. Disk analyzed_key alone used to
+# skip straight to generate after restart — user never saw MASK CHECK again.
+_SESSION_ANALYZED_KEYS = set()
+
+
+def _phase_decision(phase, key, stored_key, reanalyze=False):
+    """Returns (pass_through, key_to_store).
+
+    auto: first encounter of this clip in the current ComfyUI session always
+    analyzes (MASK CHECK), even if disk still has analyzed_key from yesterday.
+    Later Runs in the same session generate when the disk key matches.
+    """
     if phase.startswith("2"):
         return True, stored_key if stored_key is not None else key
-    if phase.startswith("1"):
+    if phase.startswith("1") or reanalyze:
         return False, key
-    # auto — treat near-identical keys as the same clip (float/re-decode jitter)
+    # auto — session-first analyze, then sticky generate
+    if key not in _SESSION_ANALYZED_KEYS:
+        return False, key
     if _same_driving_clip(stored_key, key):
-        return True, key  # refresh stored key to the latest stable fingerprint
+        return True, key
     return False, key
 
 
@@ -1343,10 +1365,8 @@ class GAPPhaseGate:
         """Only skip the mask wire when user explicitly wants the analyze-time freeze."""
         key = _video_content_key(frames)
         state = _load_phase_state()
-        if reanalyze:
-            pass_through = False
-        else:
-            pass_through, _ = _phase_decision(phase, key, state.get("analyzed_key"))
+        pass_through, _ = _phase_decision(
+            phase, key, state.get("analyzed_key"), reanalyze=reanalyze)
         frozen = _load_frozen_mask()
         frozen_ok = (
             frozen is not None
@@ -1368,13 +1388,20 @@ class GAPPhaseGate:
         state = _load_phase_state()
         if reanalyze:
             state.pop("analyzed_key", None)
-            stored_key = None
-            pass_through, store = False, key
+            _SESSION_ANALYZED_KEYS.discard(key)
+            # also drop any prior soft-matching keys for this shape
+            _SESSION_ANALYZED_KEYS.difference_update(
+                {k for k in list(_SESSION_ANALYZED_KEYS) if k.startswith(key.split("|", 1)[0] + "|")}
+            )
             log.info("phase gate: reanalyze=ON — clearing analyze cache, analysis only this Run")
-        else:
-            stored_key = state.get("analyzed_key")
-            pass_through, store = _phase_decision(phase, key, stored_key)
+        stored_key = state.get("analyzed_key")
+        pass_through, store = _phase_decision(
+            phase, key, stored_key, reanalyze=reanalyze)
         use_frozen = on_generate.startswith("use frozen")
+
+        if not pass_through and key not in _SESSION_ANALYZED_KEYS and _same_driving_clip(stored_key, key):
+            log.info("phase gate: first Run this ComfyUI session → ANALYSIS only (MASK CHECK); "
+                     "press Run again to generate")
 
         frozen = _load_frozen_mask()
         frozen_ok = (
@@ -1390,7 +1417,8 @@ class GAPPhaseGate:
                 out_mask = frozen
                 log.info("phase gate: using FROZEN mask (%d frames) — SAM3 skipped; "
                          "post-analyze paint edits are NOT applied", frozen.shape[0])
-                mask_check_out = ExecutionBlocker(None)
+                # Still show MASK CHECK — never swallow the preview on generate
+                mask_check_out = out_mask
                 msg = ("PHASE 2 — RENDERING (frozen mask, SAM3 skipped)\n\n"
                        "Using the mask frozen at analysis — paint edits after Run 1 are ignored.\n"
                        "To keep paint edits: set on_generate to 'use live mask'.")
@@ -1409,7 +1437,7 @@ class GAPPhaseGate:
                 _progress_text("PHASE 2: live mask — edits kept", unique_id)
             elif frozen_ok:
                 out_mask = frozen
-                mask_check_out = ExecutionBlocker(None)
+                mask_check_out = out_mask
                 msg = ("PHASE 2 — RENDERING (fallback to frozen mask)\n\n"
                        "No live mask arrived — using freeze from analysis.")
                 _progress_text("PHASE 2: fallback frozen mask", unique_id)
@@ -1417,17 +1445,16 @@ class GAPPhaseGate:
             else:
                 out_mask = torch.zeros((frames.shape[0], frames.shape[1], frames.shape[2], 3),
                                        dtype=torch.float32)
-                mask_check_out = ExecutionBlocker(None)
+                mask_check_out = out_mask
                 msg = "PHASE 2 — RENDERING\n\nWARNING: no mask available."
                 _progress_text("PHASE 2: NO MASK", unique_id)
                 log.warning("phase gate: no live mask and no freeze")
 
-            if store != stored_key or state.get("analyzed_key") != store:
-                state["analyzed_key"] = store
-                _save_phase_state(state)
-            else:
-                # still persist mask_fp if we updated freeze above
-                _save_phase_state(state)
+            state["analyzed_key"] = store
+            _SESSION_ANALYZED_KEYS.add(key)
+            if store:
+                _SESSION_ANALYZED_KEYS.add(store)
+            _save_phase_state(state)
 
             log.info("phase gate: rendering pass")
             return (frames, msg, out_mask, mask_check_out)
@@ -1443,23 +1470,29 @@ class GAPPhaseGate:
                      pose_video_mask.shape[0])
         elif frozen_ok:
             out_mask = frozen
-            if phase.startswith("auto"):
-                # No live mask but freeze exists — treat as generate
-                pass_through = True
-                store = key
-                log.info("phase gate: no live mask on analyze; switching to generate with freeze")
-                state["analyzed_key"] = store
-                _save_phase_state(state)
-                msg = ("PHASE 2 — RENDERING (frozen mask)\n\n"
-                       "No live mask on the wire; using freeze.")
-                _progress_text("PHASE 2: frozen mask", unique_id)
-                return (frames, msg, out_mask, ExecutionBlocker(None))
+            if phase.startswith("auto") and not reanalyze:
+                # No live mask but freeze exists — treat as generate only if
+                # this session already analyzed (otherwise fall through to show MASK CHECK)
+                if key in _SESSION_ANALYZED_KEYS:
+                    pass_through = True
+                    store = key
+                    log.info("phase gate: no live mask on analyze; switching to generate with freeze")
+                    state["analyzed_key"] = store
+                    _save_phase_state(state)
+                    msg = ("PHASE 2 — RENDERING (frozen mask)\n\n"
+                           "No live mask on the wire; using freeze.")
+                    _progress_text("PHASE 2: frozen mask", unique_id)
+                    return (frames, msg, out_mask, out_mask)
+            # else: show frozen mask as analysis preview
         else:
             out_mask = torch.zeros((frames.shape[0], frames.shape[1], frames.shape[2], 3),
                                    dtype=torch.float32)
             log.warning("phase gate: pose_video_mask not wired")
 
         state["analyzed_key"] = store
+        _SESSION_ANALYZED_KEYS.add(key)
+        if store:
+            _SESSION_ANALYZED_KEYS.add(store)
         _save_phase_state(state)
 
         again = ("Press Run again to render. If you paint the mask after this, leave "
@@ -1469,7 +1502,8 @@ class GAPPhaseGate:
                  "Set phase to '2' (or 'auto') and press Run. "
                  "Painted after this? use live mask / or phase 1 again to re-freeze.")
         msg = ("PHASE 1 COMPLETE — ANALYSIS ONLY\n\n"
-               "Mask from this pass is saved as freeze.\n\n"
+               "Mask from this pass is saved as freeze.\n"
+               "MASK CHECK / Timeline should show the driving mask now.\n\n"
                "If you PAINT/fix the mask after this:\n"
                "  • keep on_generate = 'use live mask' (default), OR\n"
                "  • set phase to '1', Run once more to commit paint into freeze,\n"
